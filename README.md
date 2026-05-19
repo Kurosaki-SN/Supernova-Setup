@@ -34,15 +34,6 @@ PowerShell may show a UAC prompt when launching tools if "Run launch target as a
 5. For Ashita v4, use `Tools > Copy xiloader to Ashita`, then `Tools > Write Ashita Config`.
 6. Use the `Launch` tab for direct, Windower, or Ashita launch.
 
-## Build The Installer
-
-Install Inno Setup, then compile:
-
-```powershell
-iscc .\installer\SupernovaLauncher.iss
-```
-
-The installer will be written to `installer\dist\SupernovaFFXILauncherSetup.exe`.
 
 ## Notes
 
