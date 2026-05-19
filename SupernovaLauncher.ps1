@@ -295,18 +295,23 @@ function Copy-FileWithBackup {
     param(
         [Parameter(Mandatory)][string]$Source,
         [Parameter(Mandatory)][string]$Destination,
-        [Parameter(Mandatory)][string]$BackupDirectory
+        [Parameter(Mandatory)][string]$BackupDirectory,
+        [string]$BackupRelativePath = ''
     )
 
     $destinationDirectory = Split-Path -Parent $Destination
     New-DirectoryIfMissing -Path $destinationDirectory
 
     if (Test-Path -LiteralPath $Destination -PathType Leaf) {
-        $relativeName = Split-Path -Leaf $Destination
-        $backupPath = Join-Path $BackupDirectory $relativeName
+        if ([string]::IsNullOrWhiteSpace($BackupRelativePath)) {
+            $BackupRelativePath = Split-Path -Leaf $Destination
+        }
+
+        $backupPath = Join-Path $BackupDirectory $BackupRelativePath
+        New-DirectoryIfMissing -Path (Split-Path -Parent $backupPath)
         $suffix = 1
         while (Test-Path -LiteralPath $backupPath) {
-            $backupPath = Join-Path $BackupDirectory ("{0}.{1}.bak" -f $relativeName, $suffix)
+            $backupPath = Join-Path $BackupDirectory ("{0}.{1}.bak" -f $BackupRelativePath, $suffix)
             $suffix++
         }
         Copy-Item -LiteralPath $Destination -Destination $backupPath -Force
@@ -324,6 +329,32 @@ function Test-SafeExtractedFile {
     $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\') + '\'
     $fileFull = [System.IO.Path]::GetFullPath($FilePath)
     return $fileFull.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-PatchTargetRelativePath {
+    param([Parameter(Mandatory)][string]$RelativePath)
+
+    $clean = $RelativePath.Replace('/', '\').TrimStart('\')
+    $parts = @($clean -split '\\' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $knownRoots = @(
+        'rom', 'rom2', 'rom3', 'rom4', 'rom5', 'rom6', 'rom7', 'rom8', 'rom9',
+        'sound', 'sound2', 'sound3', 'sound4'
+    )
+
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        if ($knownRoots -contains $parts[$i].ToLowerInvariant()) {
+            return (@($parts[$i..($parts.Count - 1)]) -join '\')
+        }
+    }
+
+    $leaf = [System.IO.Path]::GetFileName($clean).ToLowerInvariant()
+    switch ($leaf) {
+        'music176.bgw' { return 'sound4\win\music\data\music176.bgw' }
+        '69.dat' { return 'ROM4\1\69.dat' }
+        '57.dat' { return 'ROM\27\57.dat' }
+        '58.dat' { return 'ROM\27\58.dat' }
+        default { return $clean }
+    }
 }
 
 function Apply-PatchZip {
@@ -378,8 +409,9 @@ function Apply-PatchZip {
                 throw "Unsafe relative path in patch zip: $relative"
             }
 
-            $target = Join-Path $FfxiFolder $relative
-            Copy-FileWithBackup -Source $file.FullName -Destination $target -BackupDirectory $backupDir
+            $targetRelative = Get-PatchTargetRelativePath -RelativePath $relative
+            $target = Join-Path $FfxiFolder $targetRelative
+            Copy-FileWithBackup -Source $file.FullName -Destination $target -BackupDirectory $backupDir -BackupRelativePath $targetRelative
         }
 
         Show-Info "Patch applied. Backups are in:`r`n$backupDir"

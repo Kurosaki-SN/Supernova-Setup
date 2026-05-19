@@ -14,6 +14,7 @@ This package does not include Final Fantasy XI files, xiloader, Windower, Ashita
   - `<executable>xiloader.exe</executable>`
 - Can create an Ashita v4 boot config under `config\boot\supernova.ini`.
 - Can download and apply the configured Dropbox patch zip, backing up overwritten files first.
+- The installer can optionally download and apply the patch during installation.
 
 ## Run It
 
@@ -34,6 +35,17 @@ PowerShell may show a UAC prompt when launching tools if "Run launch target as a
 5. For Ashita v4, use `Tools > Copy xiloader to Ashita`, then `Tools > Write Ashita Config`.
 6. Use the `Launch` tab for direct, Windower, or Ashita launch.
 
+## Build The Installer
+
+Install Inno Setup, then compile:
+
+```powershell
+iscc .\installer\SupernovaLauncher.iss
+```
+
+The installer will be written to `installer\dist\SupernovaFFXILauncherSetup.exe`.
+
+During installation, select `Download and apply the Supernova FFXI patch now` to have the installer download the Dropbox patch and place the known DAT/music files into their documented FFXI subfolders. If FFXI is installed under `Program Files`, Windows may show an administrator prompt for the patch step.
 
 ## Notes
 
