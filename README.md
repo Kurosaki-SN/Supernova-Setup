@@ -13,9 +13,9 @@ This package does not include Final Fantasy XI files, xiloader, Windower, Ashita
   - `<args>--server login.supernovaffxi.com ...</args>`
   - `<executable>xiloader.exe</executable>`
 - Can create an Ashita v4 boot config under `config\boot\supernova.ini`.
-- Can download and apply the configured Dropbox patch zip, backing up overwritten files first.
+- Can download and apply the configured Supernova custom DATs zip and update patch zip, backing up overwritten files first.
 - The installer can optionally download pinned `xiloader.exe` v2.0.1 and place it beside `pol.exe`.
-- The installer can optionally download and apply the patch during installation.
+- The installer can optionally download and apply the custom DATs and patch during installation.
 
 ## Run It
 
@@ -48,7 +48,7 @@ The installer will be written to `installer\dist\SupernovaFFXILauncherSetup.exe`
 
 During installation, select `Download and install Supernova-compatible xiloader v2.0.1` to have the installer place the pinned 2.0.x xiloader beside `pol.exe` in PlayOnlineViewer. Existing `xiloader.exe` files are backed up first. This step verifies the official v2.0.1 release MD5.
 
-Select `Download and apply the Supernova FFXI patch now` to have the installer download the Dropbox patch and place the known DAT/music files into their documented FFXI subfolders. If FFXI or PlayOnline is installed under `Program Files`, Windows may show an administrator prompt for those setup steps.
+Select `Download and install Supernova custom DATs and patch` to have the installer download both Dropbox archives. The custom DAT archive maps DAT/music files into their documented FFXI subfolders, while the update patch archive installs root-level files such as DLLs, config files, and `polboot.exe` directly into the selected `FINAL FANTASY XI` folder. If FFXI or PlayOnline is installed under `Program Files`, Windows may show an administrator prompt for those setup steps.
 
 ## Notes
 

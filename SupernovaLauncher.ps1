@@ -7,6 +7,7 @@ $ErrorActionPreference = 'Stop'
 # commands, patch workflow, settings storage, backups, and logging.
 $script:AppName = 'Supernova FFXI Launcher'
 $script:ServerHost = 'login.supernovaffxi.com'
+$script:CustomDatsUrl = 'https://www.dropbox.com/scl/fi/8x60dqiegajxd5fw63viz/supernova-dats.zip?rlkey=pxnn71t6jwcmyfdxudkrx5ywm&e=1&dl=1'
 $script:PatchUrl = 'https://www.dropbox.com/scl/fi/qx4l8slvbgcg76ko4h0bo/FFXI-UpdatePatch.zip?rlkey=ltvhrbzr9vtaf4pq3bm3hlc03&e=1&dl=1'
 $script:SettingsDir = Join-Path $env:LOCALAPPDATA 'SupernovaFFXILauncher'
 $script:SettingsPath = Join-Path $script:SettingsDir 'settings.json'
@@ -370,10 +371,10 @@ function Test-SafeExtractedFile {
     return $fileFull.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)
 }
 
-# Converts an extracted patch path into the destination path under the FFXI
+# Converts a custom DAT archive path into the destination path under the FFXI
 # folder. Archives that already contain ROM/sound folders keep that structure;
-# flat archives get known Supernova files mapped to documented locations.
-function Get-PatchTargetRelativePath {
+# flat archives get known Supernova DAT/music files mapped to documented locations.
+function Get-CustomDatsTargetRelativePath {
     param([Parameter(Mandatory)][string]$RelativePath)
 
     $clean = $RelativePath.Replace('/', '\').TrimStart('\')
@@ -399,37 +400,42 @@ function Get-PatchTargetRelativePath {
     }
 }
 
-# Downloads and applies the Supernova patch from the launcher UI. This is the
-# interactive version of the patch workflow and asks for confirmation first.
-function Apply-PatchZip {
-    param([Parameter(Mandatory)][string]$FfxiFolder)
+# Converts an update patch archive path into the destination path under the FFXI
+# folder. The update patch contains root-level files such as DLLs, config files,
+# and polboot.exe, so those files should go directly in FINAL FANTASY XI.
+function Get-RootPatchTargetRelativePath {
+    param([Parameter(Mandatory)][string]$RelativePath)
 
-    if (-not (Test-Path -LiteralPath $FfxiFolder -PathType Container)) {
-        throw "FFXI folder not found: $FfxiFolder"
-    }
+    return $RelativePath.Replace('/', '\').TrimStart('\')
+}
 
-    $message = "This will download the Supernova patch zip and copy its contents into:`r`n$FfxiFolder`r`n`r`nExisting overwritten files are backed up first. Continue?"
-    if (-not (Confirm-Action -Message $message)) {
-        return
-    }
+# Downloads and installs one Supernova archive into the FFXI folder. The custom
+# DATs archive and update patch archive both use this path so they share the same
+# safety checks, path mapping, and backup behavior.
+function Install-SupernovaArchive {
+    param(
+        [Parameter(Mandatory)][string]$FfxiFolder,
+        [Parameter(Mandatory)][string]$DownloadUrl,
+        [Parameter(Mandatory)][string]$ArchiveLabel,
+        [Parameter(Mandatory)][string]$BackupDirectory,
+        [Parameter(Mandatory)]
+        [ValidateSet('CustomDats', 'RootPatch')]
+        [string]$InstallMode
+    )
 
-    New-DirectoryIfMissing -Path $script:SettingsDir
-    New-DirectoryIfMissing -Path $script:BackupRoot
-
-    $work = Join-Path $env:TEMP ('SupernovaPatch-' + [guid]::NewGuid().ToString('N'))
-    $zipPath = Join-Path $work 'FFXI-UpdatePatch.zip'
+    $safeLabel = $ArchiveLabel -replace '[^A-Za-z0-9]+', ''
+    $work = Join-Path $env:TEMP ("Supernova$safeLabel-" + [guid]::NewGuid().ToString('N'))
+    $zipPath = Join-Path $work "$safeLabel.zip"
     $extractPath = Join-Path $work 'extract'
-    $backupDir = Join-Path $script:BackupRoot (Get-Date -Format 'yyyyMMdd-HHmmss')
 
     New-DirectoryIfMissing -Path $work
     New-DirectoryIfMissing -Path $extractPath
-    New-DirectoryIfMissing -Path $backupDir
 
     try {
         $previousProgressPreference = $ProgressPreference
         try {
             $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -Uri $script:PatchUrl -OutFile $zipPath -UseBasicParsing
+            Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipPath -UseBasicParsing
         }
         finally {
             $ProgressPreference = $previousProgressPreference
@@ -439,32 +445,63 @@ function Apply-PatchZip {
 
         $files = Get-ChildItem -LiteralPath $extractPath -File -Recurse
         if ($files.Count -eq 0) {
-            throw 'Patch zip did not contain any files.'
+            throw "$ArchiveLabel zip did not contain any files."
         }
 
+        $rootPrefix = [System.IO.Path]::GetFullPath($extractPath).TrimEnd('\') + '\'
         foreach ($file in $files) {
             if (-not (Test-SafeExtractedFile -Root $extractPath -FilePath $file.FullName)) {
-                throw "Unsafe file path in patch zip: $($file.FullName)"
+                throw "Unsafe file path in $ArchiveLabel zip: $($file.FullName)"
             }
 
-            $rootPrefix = [System.IO.Path]::GetFullPath($extractPath).TrimEnd('\') + '\'
             $relative = $file.FullName.Substring($rootPrefix.Length)
             if ($relative -match '(^|\\)\.\.(\\|$)') {
-                throw "Unsafe relative path in patch zip: $relative"
+                throw "Unsafe relative path in $ArchiveLabel zip: $relative"
             }
 
-            $targetRelative = Get-PatchTargetRelativePath -RelativePath $relative
-            $target = Join-Path $FfxiFolder $targetRelative
-            Copy-FileWithBackup -Source $file.FullName -Destination $target -BackupDirectory $backupDir -BackupRelativePath $targetRelative
-        }
+            if ($InstallMode -eq 'CustomDats') {
+                $targetRelative = Get-CustomDatsTargetRelativePath -RelativePath $relative
+            }
+            else {
+                $targetRelative = Get-RootPatchTargetRelativePath -RelativePath $relative
+            }
 
-        Show-Info "Patch applied. Backups are in:`r`n$backupDir"
+            $target = Join-Path $FfxiFolder $targetRelative
+            Copy-FileWithBackup -Source $file.FullName -Destination $target -BackupDirectory $BackupDirectory -BackupRelativePath $targetRelative
+        }
     }
     finally {
         if (Test-Path -LiteralPath $work) {
             Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+}
+
+# Downloads and applies the Supernova custom DATs and update patch from the
+# launcher UI. This is the interactive version of the installer workflow and
+# asks for confirmation first.
+function Apply-PatchZip {
+    param([Parameter(Mandatory)][string]$FfxiFolder)
+
+    if (-not (Test-Path -LiteralPath $FfxiFolder -PathType Container)) {
+        throw "FFXI folder not found: $FfxiFolder"
+    }
+
+    $message = "This will download the Supernova custom DATs and update patch, then copy them into:`r`n$FfxiFolder`r`n`r`nExisting overwritten files are backed up first. Continue?"
+    if (-not (Confirm-Action -Message $message)) {
+        return
+    }
+
+    New-DirectoryIfMissing -Path $script:SettingsDir
+    New-DirectoryIfMissing -Path $script:BackupRoot
+
+    $backupDir = Join-Path $script:BackupRoot (Get-Date -Format 'yyyyMMdd-HHmmss')
+    New-DirectoryIfMissing -Path $backupDir
+
+    Install-SupernovaArchive -FfxiFolder $FfxiFolder -DownloadUrl $script:CustomDatsUrl -ArchiveLabel 'Supernova custom DATs' -BackupDirectory $backupDir -InstallMode 'CustomDats'
+    Install-SupernovaArchive -FfxiFolder $FfxiFolder -DownloadUrl $script:PatchUrl -ArchiveLabel 'Supernova update patch' -BackupDirectory $backupDir -InstallMode 'RootPatch'
+
+    Show-Info "Supernova custom DATs and patch applied. Backups are in:`r`n$backupDir"
 }
 
 # Looks through Windower's settings XML for a profile by name. Supports profiles
@@ -771,7 +808,7 @@ $pathsPage.Controls.Add($ashitaConfigBox)
 
 # Tools tab: setup actions that can change files outside the launcher folder.
 # Each action validates paths and either prompts or backs up files before writing.
-$patchButton = New-Button -Text 'Download/Apply Patch' -X 180 -Y 28 -Width 170
+$patchButton = New-Button -Text 'Install DATs + Patch' -X 180 -Y 28 -Width 170
 $toolsPage.Controls.Add($patchButton)
 
 $windowerUpdateButton = New-Button -Text 'Patch Windower Profile' -X 180 -Y 78 -Width 170
@@ -790,7 +827,7 @@ $notesBox.ReadOnly = $true
 $notesBox.ScrollBars = 'Vertical'
 $notesBox.Location = New-Object System.Drawing.Point(180, 250)
 $notesBox.Size = New-Object System.Drawing.Size(500, 210)
-$notesBox.Text = "Setup notes:`r`n`r`n1. xiloader.exe should be version 2.0.1 for this Supernova setup.`r`n2. Windower users should create a profile in Windower first, then this launcher can add the Supernova args and executable entries.`r`n3. Ashita v4 users can generate config\boot\supernova.ini here, then launch through ashita-cli.exe.`r`n4. The patch tool downloads the configured Dropbox zip and backs up overwritten files."
+$notesBox.Text = "Setup notes:`r`n`r`n1. xiloader.exe should be version 2.0.1 for this Supernova setup.`r`n2. Windower users should create a profile in Windower first, then this launcher can add the Supernova args and executable entries.`r`n3. Ashita v4 users can generate config\boot\supernova.ini here, then launch through ashita-cli.exe.`r`n4. The DAT/patch tool downloads both configured Dropbox zips and backs up overwritten files."
 $toolsPage.Controls.Add($notesBox)
 
 # Collects the current UI field values into the same settings object used for

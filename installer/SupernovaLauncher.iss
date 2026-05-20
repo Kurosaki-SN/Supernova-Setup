@@ -1,7 +1,7 @@
 ; Shared app metadata used throughout the installer script. Updating the version
 ; here changes what Windows and the installer wizard display.
 #define MyAppName "Supernova FFXI Launcher"
-#define MyAppVersion "0.3.1"
+#define MyAppVersion "0.3.2"
 #define MyAppPublisher "Supernova Community"
 
 ; Core installer settings: install location, output filename, compression, UI
@@ -26,12 +26,12 @@ PrivilegesRequired=lowest
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
-; Optional choices shown during setup. The patch task is unchecked by default so
-; players must explicitly choose to download and write files into their FFXI folder.
+; Optional choices shown during setup. The DAT/patch task is unchecked by default
+; so players must explicitly choose to download and write files into their FFXI folder.
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "installxiloader"; Description: "Download and install Supernova-compatible xiloader v2.0.1"; GroupDescription: "Supernova setup:"; Flags: unchecked
-Name: "applypatch"; Description: "Download and apply the Supernova FFXI patch now"; GroupDescription: "Supernova setup:"; Flags: unchecked
+Name: "applypatch"; Description: "Download and install Supernova custom DATs and patch"; GroupDescription: "Supernova setup:"; Flags: unchecked
 
 ; Files bundled into the installed launcher folder. These are launcher/helper
 ; scripts only; the installer does not bundle FFXI game files or DAT assets.
@@ -112,9 +112,9 @@ begin
 
   PatchDirPage := CreateInputDirPage(
     PlayOnlineDirPage.ID,
-    'Supernova Patch Files',
+    'Supernova DATs and Patch Files',
     'Choose your Final Fantasy XI folder',
-    'The installer will download the Supernova patch and copy the files into this FFXI folder. Existing files that are overwritten will be backed up first.',
+    'The installer will download the Supernova custom DATs and update patch, then copy the files into this FFXI folder. Existing files that are overwritten will be backed up first.',
     False,
     ''
   );
@@ -197,7 +197,7 @@ begin
 
     if WizardIsTaskSelected('applypatch') then
     begin
-      WizardForm.StatusLabel.Caption := 'Downloading and applying Supernova patch...';
+      WizardForm.StatusLabel.Caption := 'Downloading and applying Supernova DATs and patch...';
 
       // Build the PowerShell command that runs the installed patch helper against
       // the selected FFXI folder.
@@ -216,7 +216,7 @@ begin
       else if PatchResultCode <> 0 then
         MsgBox('The patch helper reported an error. Check %LOCALAPPDATA%\SupernovaFFXILauncher\PatchInstall.log for details.', mbError, MB_OK)
       else
-        MsgBox('Supernova patch files were applied successfully. Backups are under %LOCALAPPDATA%\SupernovaFFXILauncher\Backups.', mbInformation, MB_OK);
+        MsgBox('Supernova custom DATs and patch files were applied successfully. Backups are under %LOCALAPPDATA%\SupernovaFFXILauncher\Backups.', mbInformation, MB_OK);
     end;
   end;
 end;

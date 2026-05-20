@@ -1,9 +1,12 @@
 # Inputs supplied by the installer or by a manual PowerShell run.
-# FfxiFolder is the player's local FINAL FANTASY XI folder; PatchUrl can be
-# overridden for future Supernova patch URLs without editing the rest of the script.
+# FfxiFolder is the player's local FINAL FANTASY XI folder. CustomDatsUrl and
+# PatchUrl can be overridden for future Supernova archive URLs without editing
+# the rest of the script.
 param(
     [Parameter(Mandatory = $true)]
     [string]$FfxiFolder,
+
+    [string]$CustomDatsUrl = 'https://www.dropbox.com/scl/fi/8x60dqiegajxd5fw63viz/supernova-dats.zip?rlkey=pxnn71t6jwcmyfdxudkrx5ywm&e=1&dl=1',
 
     [string]$PatchUrl = 'https://www.dropbox.com/scl/fi/qx4l8slvbgcg76ko4h0bo/FFXI-UpdatePatch.zip?rlkey=ltvhrbzr9vtaf4pq3bm3hlc03&e=1&dl=1'
 )
@@ -52,11 +55,11 @@ function Test-SafeExtractedFile {
     return $fileFull.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)
 }
 
-# Converts a path from the downloaded zip into the matching path under the FFXI
-# install. If the zip already contains ROM/sound folders, it preserves that
-# structure. If the zip is flat, it maps the known Supernova files to their
-# documented destinations.
-function Get-PatchTargetRelativePath {
+# Converts a custom DAT archive path into the matching path under the FFXI
+# install. If the archive already contains ROM/sound folders, it preserves that
+# structure. If the archive is flat, it maps the known Supernova DAT/music files
+# to their documented destinations.
+function Get-CustomDatsTargetRelativePath {
     param([Parameter(Mandatory = $true)][string]$RelativePath)
 
     $clean = $RelativePath.Replace('/', '\').TrimStart('\')
@@ -80,6 +83,16 @@ function Get-PatchTargetRelativePath {
         '58.dat' { return 'ROM\27\58.dat' }
         default { return $clean }
     }
+}
+
+# Converts an update patch archive path into the matching path under the FFXI
+# install. The update patch contains root-level game files such as DLLs, config
+# files, and polboot.exe, so those files are installed directly into the selected
+# FINAL FANTASY XI folder.
+function Get-RootPatchTargetRelativePath {
+    param([Parameter(Mandatory = $true)][string]$RelativePath)
+
+    return $RelativePath.Replace('/', '\').TrimStart('\')
 }
 
 # Copies a patch file into the FFXI folder. If a target file already exists, it
@@ -113,37 +126,34 @@ function Copy-FileWithBackup {
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
 }
 
-# Main patch workflow: validate the FFXI folder, download the patch zip, extract
-# it to a temporary folder, place each file into the right FFXI subfolder, and
-# clean up temporary files afterward.
-function Apply-SupernovaPatch {
+# Installs one Supernova archive into the FFXI folder. Both the custom DATs zip
+# and update patch zip use this path so they get the same safety checks, path
+# mapping, backup behavior, and cleanup.
+function Install-SupernovaArchive {
     param(
         [Parameter(Mandatory = $true)][string]$TargetFfxiFolder,
-        [Parameter(Mandatory = $true)][string]$DownloadUrl
+        [Parameter(Mandatory = $true)][string]$DownloadUrl,
+        [Parameter(Mandatory = $true)][string]$ArchiveLabel,
+        [Parameter(Mandatory = $true)][string]$BackupDirectory,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('CustomDats', 'RootPatch')]
+        [string]$InstallMode
     )
-
-    if (-not (Test-Path -LiteralPath $TargetFfxiFolder -PathType Container)) {
-        throw "FFXI folder not found: $TargetFfxiFolder"
-    }
-
-    New-DirectoryIfMissing -Path $appData
-    New-DirectoryIfMissing -Path $backupRoot
 
     # Use a unique temporary folder for every run so interrupted or parallel
     # installs cannot collide with each other.
-    $work = Join-Path $env:TEMP ('SupernovaPatch-' + [guid]::NewGuid().ToString('N'))
-    $zipPath = Join-Path $work 'FFXI-UpdatePatch.zip'
+    $safeLabel = $ArchiveLabel -replace '[^A-Za-z0-9]+', ''
+    $work = Join-Path $env:TEMP ("Supernova$safeLabel-" + [guid]::NewGuid().ToString('N'))
+    $zipPath = Join-Path $work "$safeLabel.zip"
     $extractPath = Join-Path $work 'extract'
-    $backupDir = Join-Path $backupRoot (Get-Date -Format 'yyyyMMdd-HHmmss')
 
     New-DirectoryIfMissing -Path $work
     New-DirectoryIfMissing -Path $extractPath
-    New-DirectoryIfMissing -Path $backupDir
 
     try {
         # Download the zip to the temporary workspace. Progress output is muted
         # because the installer already shows its own status text.
-        Write-PatchLog "Downloading patch from $DownloadUrl"
+        Write-PatchLog "Downloading $ArchiveLabel from $DownloadUrl"
         $previousProgressPreference = $ProgressPreference
         try {
             $ProgressPreference = 'SilentlyContinue'
@@ -155,34 +165,38 @@ function Apply-SupernovaPatch {
 
         # Expand the archive, then collect the extracted files. An empty archive
         # is treated as an error because there is nothing useful to install.
-        Write-PatchLog "Extracting patch archive"
+        Write-PatchLog "Extracting $ArchiveLabel archive"
         Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force
 
         $files = @(Get-ChildItem -LiteralPath $extractPath -File -Recurse)
         if ($files.Count -eq 0) {
-            throw 'Patch zip did not contain any files.'
+            throw "$ArchiveLabel zip did not contain any files."
         }
 
         # For each extracted file, verify the path is safe, translate it to the
-        # destination inside FFXI, back up any existing file, and copy the patch.
+        # destination inside FFXI, back up any existing file, and copy it.
         $rootPrefix = [System.IO.Path]::GetFullPath($extractPath).TrimEnd('\') + '\'
         foreach ($file in $files) {
             if (-not (Test-SafeExtractedFile -Root $extractPath -FilePath $file.FullName)) {
-                throw "Unsafe file path in patch zip: $($file.FullName)"
+                throw "Unsafe file path in $ArchiveLabel zip: $($file.FullName)"
             }
 
             $relative = $file.FullName.Substring($rootPrefix.Length)
             if ($relative -match '(^|\\)\.\.(\\|$)') {
-                throw "Unsafe relative path in patch zip: $relative"
+                throw "Unsafe relative path in $ArchiveLabel zip: $relative"
             }
 
-            $targetRelative = Get-PatchTargetRelativePath -RelativePath $relative
+            if ($InstallMode -eq 'CustomDats') {
+                $targetRelative = Get-CustomDatsTargetRelativePath -RelativePath $relative
+            }
+            else {
+                $targetRelative = Get-RootPatchTargetRelativePath -RelativePath $relative
+            }
+
             $target = Join-Path $TargetFfxiFolder $targetRelative
             Write-PatchLog "Installing $targetRelative"
-            Copy-FileWithBackup -Source $file.FullName -Destination $target -BackupDirectory $backupDir -TargetRelativePath $targetRelative
+            Copy-FileWithBackup -Source $file.FullName -Destination $target -BackupDirectory $BackupDirectory -TargetRelativePath $targetRelative
         }
-
-        Write-PatchLog "Patch applied. Backups are in: $backupDir"
     }
     finally {
         # Temporary download/extract files are no longer needed after either a
@@ -193,10 +207,36 @@ function Apply-SupernovaPatch {
     }
 }
 
+# Main install workflow: validate the FFXI folder, create one timestamped backup
+# folder for the whole run, install custom DATs first, then install the update
+# patch on top.
+function Apply-SupernovaPatch {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetFfxiFolder,
+        [Parameter(Mandatory = $true)][string]$CustomDatsDownloadUrl,
+        [Parameter(Mandatory = $true)][string]$PatchDownloadUrl
+    )
+
+    if (-not (Test-Path -LiteralPath $TargetFfxiFolder -PathType Container)) {
+        throw "FFXI folder not found: $TargetFfxiFolder"
+    }
+
+    New-DirectoryIfMissing -Path $appData
+    New-DirectoryIfMissing -Path $backupRoot
+
+    $backupDir = Join-Path $backupRoot (Get-Date -Format 'yyyyMMdd-HHmmss')
+    New-DirectoryIfMissing -Path $backupDir
+
+    Install-SupernovaArchive -TargetFfxiFolder $TargetFfxiFolder -DownloadUrl $CustomDatsDownloadUrl -ArchiveLabel 'Supernova custom DATs' -BackupDirectory $backupDir -InstallMode 'CustomDats'
+    Install-SupernovaArchive -TargetFfxiFolder $TargetFfxiFolder -DownloadUrl $PatchDownloadUrl -ArchiveLabel 'Supernova update patch' -BackupDirectory $backupDir -InstallMode 'RootPatch'
+
+    Write-PatchLog "Supernova custom DATs and patch applied. Backups are in: $backupDir"
+}
+
 # Entry point used by the installer. A zero exit code means success; a non-zero
 # exit code lets Inno Setup show a patch failure message.
 try {
-    Apply-SupernovaPatch -TargetFfxiFolder $FfxiFolder -DownloadUrl $PatchUrl
+    Apply-SupernovaPatch -TargetFfxiFolder $FfxiFolder -CustomDatsDownloadUrl $CustomDatsUrl -PatchDownloadUrl $PatchUrl
     exit 0
 }
 catch {
