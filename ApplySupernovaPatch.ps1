@@ -1,3 +1,6 @@
+# Inputs supplied by the installer or by a manual PowerShell run.
+# FfxiFolder is the player's local FINAL FANTASY XI folder; PatchUrl can be
+# overridden for future Supernova patch URLs without editing the rest of the script.
 param(
     [Parameter(Mandatory = $true)]
     [string]$FfxiFolder,
@@ -5,13 +8,20 @@ param(
     [string]$PatchUrl = 'https://www.dropbox.com/scl/fi/qx4l8slvbgcg76ko4h0bo/FFXI-UpdatePatch.zip?rlkey=ltvhrbzr9vtaf4pq3bm3hlc03&e=1&dl=1'
 )
 
+# Catch common mistakes and stop on errors so the installer can
+# report a failed patch instead of silently continuing after a bad copy.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Shared paths used for logs and backups. These live outside the FFXI folder so
+# the patch process keeps a record of what it did without adding extra files to
+# the game directory.
 $appData = Join-Path $env:LOCALAPPDATA 'SupernovaFFXILauncher'
 $backupRoot = Join-Path $appData 'Backups'
 $logPath = Join-Path $appData 'PatchInstall.log'
 
+# Creates a directory only when it does not already exist. Several other
+# functions call this before writing logs, backups, extracted files, or targets.
 function New-DirectoryIfMissing {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) {
@@ -19,6 +29,8 @@ function New-DirectoryIfMissing {
     }
 }
 
+# Writes progress to both the installer console and a persistent log file.
+# The log is useful if a player reports that patching failed on their machine.
 function Write-PatchLog {
     param([Parameter(Mandatory = $true)][string]$Message)
     New-DirectoryIfMissing -Path $appData
@@ -27,6 +39,8 @@ function Write-PatchLog {
     Write-Host $Message
 }
 
+# Confirms an extracted file is still inside the temporary extraction folder.
+# This protects against zip entries with odd paths that try to escape the temp folder.
 function Test-SafeExtractedFile {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
@@ -38,6 +52,10 @@ function Test-SafeExtractedFile {
     return $fileFull.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)
 }
 
+# Converts a path from the downloaded zip into the matching path under the FFXI
+# install. If the zip already contains ROM/sound folders, it preserves that
+# structure. If the zip is flat, it maps the known Supernova files to their
+# documented destinations.
 function Get-PatchTargetRelativePath {
     param([Parameter(Mandatory = $true)][string]$RelativePath)
 
@@ -64,6 +82,8 @@ function Get-PatchTargetRelativePath {
     }
 }
 
+# Copies a patch file into the FFXI folder. If a target file already exists, it
+# is copied into the timestamped backup folder first using the same relative path.
 function Copy-FileWithBackup {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
@@ -93,6 +113,9 @@ function Copy-FileWithBackup {
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
 }
 
+# Main patch workflow: validate the FFXI folder, download the patch zip, extract
+# it to a temporary folder, place each file into the right FFXI subfolder, and
+# clean up temporary files afterward.
 function Apply-SupernovaPatch {
     param(
         [Parameter(Mandatory = $true)][string]$TargetFfxiFolder,
@@ -106,6 +129,8 @@ function Apply-SupernovaPatch {
     New-DirectoryIfMissing -Path $appData
     New-DirectoryIfMissing -Path $backupRoot
 
+    # Use a unique temporary folder for every run so interrupted or parallel
+    # installs cannot collide with each other.
     $work = Join-Path $env:TEMP ('SupernovaPatch-' + [guid]::NewGuid().ToString('N'))
     $zipPath = Join-Path $work 'FFXI-UpdatePatch.zip'
     $extractPath = Join-Path $work 'extract'
@@ -116,6 +141,8 @@ function Apply-SupernovaPatch {
     New-DirectoryIfMissing -Path $backupDir
 
     try {
+        # Download the zip to the temporary workspace. Progress output is muted
+        # because the installer already shows its own status text.
         Write-PatchLog "Downloading patch from $DownloadUrl"
         $previousProgressPreference = $ProgressPreference
         try {
@@ -126,6 +153,8 @@ function Apply-SupernovaPatch {
             $ProgressPreference = $previousProgressPreference
         }
 
+        # Expand the archive, then collect the extracted files. An empty archive
+        # is treated as an error because there is nothing useful to install.
         Write-PatchLog "Extracting patch archive"
         Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force
 
@@ -134,6 +163,8 @@ function Apply-SupernovaPatch {
             throw 'Patch zip did not contain any files.'
         }
 
+        # For each extracted file, verify the path is safe, translate it to the
+        # destination inside FFXI, back up any existing file, and copy the patch.
         $rootPrefix = [System.IO.Path]::GetFullPath($extractPath).TrimEnd('\') + '\'
         foreach ($file in $files) {
             if (-not (Test-SafeExtractedFile -Root $extractPath -FilePath $file.FullName)) {
@@ -154,12 +185,16 @@ function Apply-SupernovaPatch {
         Write-PatchLog "Patch applied. Backups are in: $backupDir"
     }
     finally {
+        # Temporary download/extract files are no longer needed after either a
+        # success or a failure, so remove them before returning to the installer.
         if (Test-Path -LiteralPath $work) {
             Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }
 
+# Entry point used by the installer. A zero exit code means success; a non-zero
+# exit code lets Inno Setup show a patch failure message.
 try {
     Apply-SupernovaPatch -TargetFfxiFolder $FfxiFolder -DownloadUrl $PatchUrl
     exit 0

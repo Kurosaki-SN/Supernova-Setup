@@ -1,6 +1,10 @@
+# Make PowerShell catch common mistakes and stop on errors so the launcher shows
+# a clear message instead of continuing after a failed file or process action.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Global launcher configuration. These values are shared by the UI, launch
+# commands, patch workflow, settings storage, backups, and logging.
 $script:AppName = 'Supernova FFXI Launcher'
 $script:ServerHost = 'login.supernovaffxi.com'
 $script:PatchUrl = 'https://www.dropbox.com/scl/fi/qx4l8slvbgcg76ko4h0bo/FFXI-UpdatePatch.zip?rlkey=ltvhrbzr9vtaf4pq3bm3hlc03&e=1&dl=1'
@@ -9,10 +13,13 @@ $script:SettingsPath = Join-Path $script:SettingsDir 'settings.json'
 $script:BackupRoot = Join-Path $script:SettingsDir 'Backups'
 $script:LogPath = Join-Path $script:SettingsDir 'launcher.log'
 
+# Load the Windows Forms assemblies used to build the launcher window.
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
+# Creates a directory only when it does not already exist. This keeps callers
+# simple when they need settings, logs, backup, or patch folders.
 function New-DirectoryIfMissing {
     param([Parameter(Mandatory)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) {
@@ -20,6 +27,7 @@ function New-DirectoryIfMissing {
     }
 }
 
+# Writes launcher activity to a persistent log under LocalAppData.
 function Write-Log {
     param([Parameter(Mandatory)][string]$Message)
     New-DirectoryIfMissing -Path $script:SettingsDir
@@ -27,22 +35,27 @@ function Write-Log {
     Add-Content -LiteralPath $script:LogPath -Value "[$stamp] $Message"
 }
 
+# Shows an informational message box with the launcher title.
 function Show-Info {
     param([Parameter(Mandatory)][string]$Message)
     [System.Windows.Forms.MessageBox]::Show($Message, $script:AppName, 'OK', 'Information') | Out-Null
 }
 
+# Shows an error message box with the launcher title.
 function Show-Error {
     param([Parameter(Mandatory)][string]$Message)
     [System.Windows.Forms.MessageBox]::Show($Message, $script:AppName, 'OK', 'Error') | Out-Null
 }
 
+# Shows a Yes/No confirmation dialog and returns true only when the user chooses Yes.
 function Confirm-Action {
     param([Parameter(Mandatory)][string]$Message)
     $result = [System.Windows.Forms.MessageBox]::Show($Message, $script:AppName, 'YesNo', 'Question')
     return $result -eq [System.Windows.Forms.DialogResult]::Yes
 }
 
+# Returns the first existing path from a list of likely locations. If none are
+# present, returns a fallback so the UI still has a sensible default to display.
 function Get-KnownFolder {
     param(
         [Parameter(Mandatory)][string[]]$Candidates,
@@ -58,6 +71,7 @@ function Get-KnownFolder {
     return $Fallback
 }
 
+# Finds the most likely PlayOnlineViewer folder for common Windows installs.
 function Get-DefaultPlayOnlineFolder {
     $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
     $pf = [Environment]::GetFolderPath('ProgramFiles')
@@ -68,6 +82,7 @@ function Get-DefaultPlayOnlineFolder {
     ) -Fallback (Join-Path $pf86 'PlayOnline\SquareEnix\PlayOnlineViewer')
 }
 
+# Finds the most likely FINAL FANTASY XI folder for common Windows installs.
 function Get-DefaultFfxiFolder {
     $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
     $pf = [Environment]::GetFolderPath('ProgramFiles')
@@ -78,6 +93,7 @@ function Get-DefaultFfxiFolder {
     ) -Fallback (Join-Path $pf86 'PlayOnline\SquareEnix\FINAL FANTASY XI')
 }
 
+# Finds the most likely Windower executable location.
 function Get-DefaultWindowerExe {
     $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
     return Get-KnownFolder -Candidates @(
@@ -87,11 +103,13 @@ function Get-DefaultWindowerExe {
     ) -Fallback (Join-Path $pf86 'Windower4\Windower.exe')
 }
 
+# Derives Windower's settings.xml path from the detected Windower executable.
 function Get-DefaultWindowerSettings {
     $windowerExe = Get-DefaultWindowerExe
     return Join-Path (Split-Path -Parent $windowerExe) 'settings.xml'
 }
 
+# Finds the most likely Ashita folder.
 function Get-DefaultAshitaFolder {
     return Get-KnownFolder -Candidates @(
         'C:\Ashita',
@@ -100,6 +118,8 @@ function Get-DefaultAshitaFolder {
     ) -Fallback 'C:\Ashita'
 }
 
+# Builds the default settings object used the first time the launcher runs, or
+# whenever an older settings file is missing a newer field.
 function Get-DefaultSettings {
     $polFolder = Get-DefaultPlayOnlineFolder
     $ashitaFolder = Get-DefaultAshitaFolder
@@ -120,6 +140,8 @@ function Get-DefaultSettings {
     }
 }
 
+# Loads saved settings from LocalAppData. Missing fields are filled from current
+# defaults so older settings files keep working after launcher updates.
 function Load-Settings {
     $defaults = Get-DefaultSettings
     if (-not (Test-Path -LiteralPath $script:SettingsPath)) {
@@ -141,12 +163,14 @@ function Load-Settings {
     }
 }
 
+# Saves the current launcher settings as JSON under LocalAppData.
 function Save-Settings {
     param([Parameter(Mandatory)]$Settings)
     New-DirectoryIfMissing -Path $script:SettingsDir
     $Settings | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $script:SettingsPath -Encoding UTF8
 }
 
+# Encrypts the remembered password for the current Windows user.
 function Protect-Password {
     param([string]$Password)
     if ([string]::IsNullOrEmpty($Password)) {
@@ -157,6 +181,8 @@ function Protect-Password {
     return ConvertFrom-SecureString -SecureString $secure
 }
 
+# Decrypts a remembered password for the current Windows user. If decryption
+# fails, the launcher falls back to a blank password instead of crashing.
 function Unprotect-Password {
     param([string]$ProtectedPassword)
     if ([string]::IsNullOrWhiteSpace($ProtectedPassword)) {
@@ -180,6 +206,7 @@ function Unprotect-Password {
     }
 }
 
+# Quotes one command-line argument when it contains whitespace or quotes.
 function Quote-ProcessArgument {
     param([Parameter(Mandatory)][string]$Value)
     if ($Value -notmatch '[\s"]') {
@@ -190,11 +217,13 @@ function Quote-ProcessArgument {
     return '"' + $escaped + '"'
 }
 
+# Turns an argument array into the single string required by ProcessStartInfo.
 function Join-ProcessArguments {
     param([string[]]$Arguments)
     return (($Arguments | Where-Object { -not [string]::IsNullOrEmpty($_) } | ForEach-Object { Quote-ProcessArgument $_ }) -join ' ')
 }
 
+# Starts xiloader, Windower, Ashita, or Explorer with optional UAC elevation.
 function Start-ExternalProcess {
     param(
         [Parameter(Mandatory)][string]$FilePath,
@@ -224,6 +253,7 @@ function Start-ExternalProcess {
     [System.Diagnostics.Process]::Start($psi) | Out-Null
 }
 
+# Opens a standard file picker and returns the chosen file path.
 function Browse-File {
     param(
         [string]$Title,
@@ -245,6 +275,7 @@ function Browse-File {
     return $null
 }
 
+# Opens a standard folder picker and returns the chosen folder path.
 function Browse-Folder {
     param(
         [string]$Description,
@@ -265,6 +296,8 @@ function Browse-Folder {
     return $null
 }
 
+# Builds the xiloader argument array. The Supernova server is always included;
+# username and password are optional convenience arguments.
 function Build-XiloaderArguments {
     param(
         [string]$Username,
@@ -282,6 +315,8 @@ function Build-XiloaderArguments {
     return $args
 }
 
+# Builds a previewable/copyable xiloader argument string from the same argument
+# logic used by the actual launch buttons.
 function Get-XiloaderCommandText {
     param(
         [string]$Username,
@@ -291,6 +326,8 @@ function Get-XiloaderCommandText {
     return Join-ProcessArguments -Arguments (Build-XiloaderArguments -Username $Username -Password $Password)
 }
 
+# Copies a file into a target location. If the target already exists, it is first
+# copied into the timestamped backup folder, preserving the relative patch path.
 function Copy-FileWithBackup {
     param(
         [Parameter(Mandatory)][string]$Source,
@@ -320,6 +357,8 @@ function Copy-FileWithBackup {
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
 }
 
+# Confirms an extracted patch file is still inside the temporary extraction
+# folder, protecting against unsafe archive paths.
 function Test-SafeExtractedFile {
     param(
         [Parameter(Mandatory)][string]$Root,
@@ -331,6 +370,9 @@ function Test-SafeExtractedFile {
     return $fileFull.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)
 }
 
+# Converts an extracted patch path into the destination path under the FFXI
+# folder. Archives that already contain ROM/sound folders keep that structure;
+# flat archives get known Supernova files mapped to documented locations.
 function Get-PatchTargetRelativePath {
     param([Parameter(Mandatory)][string]$RelativePath)
 
@@ -357,6 +399,8 @@ function Get-PatchTargetRelativePath {
     }
 }
 
+# Downloads and applies the Supernova patch from the launcher UI. This is the
+# interactive version of the patch workflow and asks for confirmation first.
 function Apply-PatchZip {
     param([Parameter(Mandatory)][string]$FfxiFolder)
 
@@ -423,6 +467,8 @@ function Apply-PatchZip {
     }
 }
 
+# Looks through Windower's settings XML for a profile by name. Supports profiles
+# where the name appears as either an attribute or child element.
 function Find-WindowerProfileNode {
     param(
         [Parameter(Mandatory)][xml]$Document,
@@ -444,6 +490,7 @@ function Find-WindowerProfileNode {
     return $null
 }
 
+# Creates or updates a child XML element with the provided text value.
 function Set-XmlChildText {
     param(
         [Parameter(Mandatory)][xml]$Document,
@@ -460,6 +507,8 @@ function Set-XmlChildText {
     $child.InnerText = $Value
 }
 
+# Updates a Windower profile so it launches xiloader.exe with the Supernova
+# server arguments. The original settings.xml is backed up before saving.
 function Update-WindowerProfile {
     param(
         [Parameter(Mandatory)][string]$SettingsXmlPath,
@@ -490,6 +539,8 @@ function Update-WindowerProfile {
     Show-Info "Windower profile updated.`r`n`r`nBackup:`r`n$backup"
 }
 
+# Writes an Ashita v4 boot config for Supernova. Existing configs with the same
+# name are backed up before being replaced.
 function New-AshitaBootConfig {
     param(
         [Parameter(Mandatory)][string]$AshitaFolder,
@@ -547,6 +598,7 @@ crashdumps = 1
     return $configPath
 }
 
+# Copies the selected xiloader.exe into Ashita's expected bootloader folder.
 function Install-XiloaderForAshita {
     param(
         [Parameter(Mandatory)][string]$AshitaFolder,
@@ -572,9 +624,12 @@ function Install-XiloaderForAshita {
     return $destination
 }
 
+# Load persisted settings before building the UI so fields start with the user's
+# previous choices when possible.
 $settings = Load-Settings
 $savedPassword = Unprotect-Password -ProtectedPassword $settings.PasswordProtected
 
+# Create the main Windows Forms shell.
 $form = New-Object System.Windows.Forms.Form
 $form.Text = $script:AppName
 $form.StartPosition = 'CenterScreen'
@@ -586,6 +641,7 @@ $tabs = New-Object System.Windows.Forms.TabControl
 $tabs.Dock = 'Fill'
 $form.Controls.Add($tabs)
 
+# Small UI factory helpers keep the form layout code compact and consistent.
 function New-TabPage {
     param([string]$Text)
     $page = New-Object System.Windows.Forms.TabPage
@@ -623,10 +679,14 @@ function New-Button {
     return $button
 }
 
+# Main tabs: Launch for running tools, Paths for configuring locations, and Tools
+# for one-time setup actions such as patching Windower, Ashita, or DAT files.
 $launchPage = New-TabPage -Text 'Launch'
 $pathsPage = New-TabPage -Text 'Paths'
 $toolsPage = New-TabPage -Text 'Tools'
 
+# Launch tab: account convenience fields, admin toggle, launch buttons, and a
+# read-only preview of the generated xiloader arguments.
 $launchPage.Controls.Add((New-Label -Text 'Server' -X 18 -Y 20))
 $serverBox = New-TextBox -Text $script:ServerHost -X 180 -Y 20 -Width 480
 $serverBox.ReadOnly = $true
@@ -669,6 +729,8 @@ $saveButton = New-Button -Text 'Save Settings' -X 180 -Y 320 -Width 150
 $copyArgsButton = New-Button -Text 'Copy Args' -X 340 -Y 320 -Width 110
 $launchPage.Controls.AddRange(@($saveButton, $copyArgsButton))
 
+# Paths tab: lets players point the launcher at their existing FFXI, xiloader,
+# Windower, and Ashita installs without moving those installs.
 $pathsPage.Controls.Add((New-Label -Text 'PlayOnline folder' -X 18 -Y 20))
 $polFolderBox = New-TextBox -Text $settings.PlayOnlineFolder -X 180 -Y 20
 $browsePolButton = New-Button -Text 'Browse' -X 650 -Y 18 -Width 80
@@ -707,6 +769,8 @@ $pathsPage.Controls.Add((New-Label -Text 'Ashita config' -X 18 -Y 340))
 $ashitaConfigBox = New-TextBox -Text $settings.AshitaConfigName -X 180 -Y 340 -Width 260
 $pathsPage.Controls.Add($ashitaConfigBox)
 
+# Tools tab: setup actions that can change files outside the launcher folder.
+# Each action validates paths and either prompts or backs up files before writing.
 $patchButton = New-Button -Text 'Download/Apply Patch' -X 180 -Y 28 -Width 170
 $toolsPage.Controls.Add($patchButton)
 
@@ -726,9 +790,11 @@ $notesBox.ReadOnly = $true
 $notesBox.ScrollBars = 'Vertical'
 $notesBox.Location = New-Object System.Drawing.Point(180, 250)
 $notesBox.Size = New-Object System.Drawing.Size(500, 210)
-$notesBox.Text = "Setup notes:`r`n`r`n1. xiloader.exe should be version 2.0.0 or newer for Supernova.`r`n2. Windower users should create a profile in Windower first, then this launcher can add the Supernova args and executable entries.`r`n3. Ashita v4 users can generate config\boot\supernova.ini here, then launch through ashita-cli.exe.`r`n4. The patch tool downloads the configured Dropbox zip and backs up overwritten files."
+$notesBox.Text = "Setup notes:`r`n`r`n1. xiloader.exe should be version 2.0.1 for this Supernova setup.`r`n2. Windower users should create a profile in Windower first, then this launcher can add the Supernova args and executable entries.`r`n3. Ashita v4 users can generate config\boot\supernova.ini here, then launch through ashita-cli.exe.`r`n4. The patch tool downloads the configured Dropbox zip and backs up overwritten files."
 $toolsPage.Controls.Add($notesBox)
 
+# Collects the current UI field values into the same settings object used for
+# JSON storage. Password storage is opt-in.
 function Read-UiSettings {
     $protectedPassword = ''
     if ($rememberPasswordBox.Checked) {
@@ -751,19 +817,24 @@ function Read-UiSettings {
     }
 }
 
+# Saves settings from the UI and confirms the save to the player.
 function Save-UiSettings {
     Save-Settings -Settings (Read-UiSettings)
     Show-Info 'Settings saved.'
 }
 
+# Refreshes the xiloader argument preview whenever username or password changes.
 function Update-CommandPreview {
     $commandPreviewBox.Text = Get-XiloaderCommandText -Username $usernameBox.Text -Password $passwordBox.Text
 }
 
+# Keep the command preview in sync with the optional login fields.
 $usernameBox.Add_TextChanged({ Update-CommandPreview })
 $passwordBox.Add_TextChanged({ Update-CommandPreview })
 Update-CommandPreview
 
+# Path browse handlers. These only update launcher fields; they do not copy or
+# edit game files.
 $browsePolButton.Add_Click({
     $path = Browse-Folder -Description 'Choose the PlayOnlineViewer folder.' -SelectedPath $polFolderBox.Text
     if ($path) {
@@ -814,6 +885,7 @@ $browseAshitaButton.Add_Click({
     }
 })
 
+# Settings and clipboard actions for the Launch tab.
 $saveButton.Add_Click({
     try { Save-UiSettings } catch { Show-Error $_.Exception.Message }
 })
@@ -824,6 +896,8 @@ $copyArgsButton.Add_Click({
     Show-Info 'xiloader arguments copied to the clipboard.'
 })
 
+# Launch handlers. These save the current fields, then start the selected launch
+# target with the generated Supernova settings.
 $launchDirectButton.Add_Click({
     try {
         Save-Settings -Settings (Read-UiSettings)
@@ -853,6 +927,8 @@ $launchAshitaButton.Add_Click({
     catch { Show-Error $_.Exception.Message }
 })
 
+# Tool handlers. These are the buttons that can write to FFXI, Windower, or
+# Ashita folders, so they route through the backup/validation helper functions.
 $patchButton.Add_Click({
     try {
         Save-Settings -Settings (Read-UiSettings)
@@ -886,6 +962,7 @@ $ashitaConfigButton.Add_Click({
     catch { Show-Error $_.Exception.Message }
 })
 
+# Opens the launcher's LocalAppData folder so logs and backups are easy to find.
 $openLogButton.Add_Click({
     try {
         New-DirectoryIfMissing -Path $script:SettingsDir
@@ -895,6 +972,7 @@ $openLogButton.Add_Click({
     catch { Show-Error $_.Exception.Message }
 })
 
+# Persist any changed fields when the launcher closes.
 $form.Add_FormClosing({
     try {
         Save-Settings -Settings (Read-UiSettings)
@@ -904,6 +982,8 @@ $form.Add_FormClosing({
     }
 })
 
+# Start the Windows Forms message loop. Any unexpected top-level error is shown
+# as a message box instead of disappearing silently.
 try {
     [System.Windows.Forms.Application]::Run($form)
 }

@@ -14,6 +14,7 @@ This package does not include Final Fantasy XI files, xiloader, Windower, Ashita
   - `<executable>xiloader.exe</executable>`
 - Can create an Ashita v4 boot config under `config\boot\supernova.ini`.
 - Can download and apply the configured Dropbox patch zip, backing up overwritten files first.
+- The installer can optionally download pinned `xiloader.exe` v2.0.1 and place it beside `pol.exe`.
 - The installer can optionally download and apply the patch during installation.
 
 ## Run It
@@ -29,16 +30,25 @@ PowerShell may show a UAC prompt when launching tools if "Run launch target as a
 ## Recommended Setup
 
 1. Install or update Final Fantasy XI normally.
-2. Put `xiloader.exe` version 2.0.0 or newer somewhere local.
+2. Put `xiloader.exe` version 2.0.1 somewhere local, or use the installer's optional xiloader step.
 3. Open the launcher and confirm the paths on the `Paths` tab.
 4. For Windower, create a profile in Windower first, then use `Tools > Patch Windower Profile`.
 5. For Ashita v4, use `Tools > Copy xiloader to Ashita`, then `Tools > Write Ashita Config`.
 6. Use the `Launch` tab for direct, Windower, or Ashita launch.
 
+## Build The Installer
+
+Install Inno Setup, then compile:
+
+```powershell
+iscc .\installer\SupernovaLauncher.iss
+```
 
 The installer will be written to `installer\dist\SupernovaFFXILauncherSetup.exe`.
 
-During installation, select `Download and apply the Supernova FFXI patch now` to have the installer download the Dropbox patch and place the known DAT/music files into their documented FFXI subfolders. If FFXI is installed under `Program Files`, Windows may show an administrator prompt for the patch step.
+During installation, select `Download and install Supernova-compatible xiloader v2.0.1` to have the installer place the pinned 2.0.x xiloader beside `pol.exe` in PlayOnlineViewer. Existing `xiloader.exe` files are backed up first. This step verifies the official v2.0.1 release MD5.
+
+Select `Download and apply the Supernova FFXI patch now` to have the installer download the Dropbox patch and place the known DAT/music files into their documented FFXI subfolders. If FFXI or PlayOnline is installed under `Program Files`, Windows may show an administrator prompt for those setup steps.
 
 ## Notes
 
