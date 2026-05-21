@@ -9,11 +9,20 @@ trap {
     }
     $crashDir = Join-Path $crashRoot 'SupernovaSetupAssistant'
     $crashLog = Join-Path $crashDir 'StartupCrash.log'
+    $desktopCrashLog = ''
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    if (-not [string]::IsNullOrWhiteSpace($desktop)) {
+        $desktopCrashLog = Join-Path $desktop 'SupernovaSetupAssistant-StartupCrash.log'
+    }
+    $crashText = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $($_ | Out-String)"
     try {
         if (-not (Test-Path -LiteralPath $crashDir)) {
             New-Item -ItemType Directory -Path $crashDir -Force | Out-Null
         }
-        Add-Content -LiteralPath $crashLog -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $($_ | Out-String)"
+        Add-Content -LiteralPath $crashLog -Value $crashText
+        if (-not [string]::IsNullOrWhiteSpace($desktopCrashLog)) {
+            Add-Content -LiteralPath $desktopCrashLog -Value $crashText
+        }
     }
     catch {
         Write-Host "Could not write startup crash log: $($_.Exception.Message)"
@@ -21,7 +30,7 @@ trap {
 
     try {
         Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
-        [System.Windows.Forms.MessageBox]::Show("Supernova Setup Assistant could not start.`r`n`r`nA crash log was written to:`r`n$crashLog", 'Supernova Setup Assistant', 'OK', 'Error') | Out-Null
+        [System.Windows.Forms.MessageBox]::Show("Supernova Setup Assistant could not start.`r`n`r`nCrash log:`r`n$crashLog`r`n`r`nDesktop copy:`r`n$desktopCrashLog", 'Supernova Setup Assistant', 'OK', 'Error') | Out-Null
     }
     catch {
         Write-Host "Supernova Setup Assistant could not start. Crash log: $crashLog"
