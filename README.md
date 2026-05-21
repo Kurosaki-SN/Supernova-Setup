@@ -81,6 +81,7 @@ To test without touching your real install, create fake folders inside this proj
 safe-test\GameRoot\PlayOnlineViewer\pol.exe
 safe-test\GameRoot\PlayOnlineViewer\xiloader.exe
 safe-test\GameRoot\FINAL FANTASY XI\ROM
+safe-test\GameRoot\FINAL FANTASY XI\ROM3
 safe-test\GameRoot\FINAL FANTASY XI\ROM4\1
 safe-test\GameRoot\FINAL FANTASY XI\sound4
 ```

@@ -348,6 +348,7 @@ function Test-FfxiFolderLooksValid {
         -not [string]::IsNullOrWhiteSpace($Path) -and
         (Test-Path -LiteralPath $Path -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $Path 'ROM') -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'ROM3') -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $Path 'ROM4') -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $Path 'sound4') -PathType Container)
     )
@@ -388,7 +389,7 @@ function Ensure-FfxiFolder {
     $resolved = Get-ResolvedFfxiFolder -Path $ffxiBox.Text
     Set-ResolvedPathIfChanged -Box $ffxiBox -ResolvedPath $resolved -Label 'FINAL FANTASY XI'
     if (-not (Test-FfxiFolderLooksValid -Path $ffxiBox.Text)) {
-        throw "Select the FINAL FANTASY XI folder itself. It should contain ROM, ROM4, and sound4 folders. Do not choose PlayOnlineViewer, SquareEnix, or PlayOnline. Current value: $($ffxiBox.Text)"
+        throw "Select the FINAL FANTASY XI folder itself. It should contain ROM, ROM3, ROM4, and sound4 folders. Do not choose PlayOnlineViewer, SquareEnix, or PlayOnline. Current value: $($ffxiBox.Text)"
     }
     Save-Settings
     return $ffxiBox.Text
@@ -865,7 +866,7 @@ function Get-ValidationResults {
     $results += New-ValidationResult -Name 'xiloader.exe exists beside pol.exe' -Passed (Test-Path -LiteralPath (Join-Path $polBox.Text 'xiloader.exe') -PathType Leaf)
     $results += New-ValidationResult -Name 'pol.exe is set to Run as administrator' -Passed (Test-RunAsAdminCompatibilityFlag -Path (Join-Path $polBox.Text 'pol.exe'))
     $results += New-ValidationResult -Name 'xiloader.exe is set to Run as administrator' -Passed (Test-RunAsAdminCompatibilityFlag -Path (Join-Path $polBox.Text 'xiloader.exe'))
-    $results += New-ValidationResult -Name 'FINAL FANTASY XI folder is selected and contains ROM, ROM4, and sound4' -Passed (Test-FfxiFolderLooksValid -Path $ffxiBox.Text)
+    $results += New-ValidationResult -Name 'FINAL FANTASY XI folder is selected and contains ROM, ROM3, ROM4, and sound4' -Passed (Test-FfxiFolderLooksValid -Path $ffxiBox.Text)
     $results += New-ValidationResult -Name 'Supernova DAT representative appears installed: ROM4\1\69.dat' -Passed (Test-Path -LiteralPath (Join-Path $ffxiBox.Text 'ROM4\1\69.dat') -PathType Leaf)
     $results += New-ValidationResult -Name 'Supernova patch representative appears installed: FFXi.dll' -Passed (Test-Path -LiteralPath (Join-Path $ffxiBox.Text 'FFXi.dll') -PathType Leaf)
 
@@ -1109,7 +1110,7 @@ $script:StepSets = @{
         [pscustomobject]@{ Title = '21. Validate'; Body = 'Click Validate Setup. Setup is ready only when every item says PASS, including Run as administrator for both pol.exe and xiloader.exe, the Ashita ffxi-bootmod bootloader, and the Ashita Supernova config with username and password command.' }
     )
     'Existing Installation' = @(
-        [pscustomobject]@{ Title = '1. Select folders'; Body = 'Detect or browse to your PlayOnlineViewer folder with pol.exe and your FINAL FANTASY XI folder with ROM, ROM4, and sound4.' },
+        [pscustomobject]@{ Title = '1. Select folders'; Body = 'Detect or browse to your PlayOnlineViewer folder with pol.exe and your FINAL FANTASY XI folder with ROM, ROM3, ROM4, and sound4.' },
         [pscustomobject]@{ Title = '2. Install required runtime and xiloader'; Body = 'Click Install MSVC x86 if validation says the runtime is missing, then click Install xiloader. The assistant downloads pinned xiloader v2.0.1 and places xiloader.exe in the same PlayOnlineViewer folder where pol.exe lives.' },
         [pscustomobject]@{ Title = '3. Set pol.exe and xiloader.exe to run as administrator'; Body = 'Manual step: click Open POL Folder, then right-click pol.exe and xiloader.exe one at a time. For each file, use Properties > Compatibility > Run this program as an administrator. The assistant validates both flags before setup is complete.' },
         [pscustomobject]@{ Title = '4. Install Supernova files'; Body = 'Click Install Patch Files, then Install Supernova DATs. Both steps back up files before replacing them.' },

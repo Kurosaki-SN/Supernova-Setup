@@ -40,6 +40,7 @@ function Test-FfxiFolderLooksValid {
     return (
         (Test-Path -LiteralPath $Path -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $Path 'ROM') -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'ROM3') -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $Path 'ROM4') -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $Path 'sound4') -PathType Container)
     )
@@ -63,7 +64,7 @@ function Backup-AndRemoveVulgarDictionary {
     param([Parameter(Mandatory = $true)][string]$TargetFfxiFolder)
 
     if (-not (Test-FfxiFolderLooksValid -Path $TargetFfxiFolder)) {
-        throw "FINAL FANTASY XI folder is not valid or is missing ROM, ROM4, or sound4: $TargetFfxiFolder"
+        throw "FINAL FANTASY XI folder is not valid or is missing ROM, ROM3, ROM4, or sound4: $TargetFfxiFolder"
     }
 
     New-DirectoryIfMissing -Path $appData

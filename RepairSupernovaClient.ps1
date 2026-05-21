@@ -45,6 +45,7 @@ function Test-FfxiFolderLooksValid {
     return (
         (Test-Path -LiteralPath $Path -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $Path 'ROM') -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'ROM3') -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $Path 'ROM4') -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $Path 'sound4') -PathType Container)
     )
@@ -57,7 +58,7 @@ try {
         throw "FINAL FANTASY XI folder not found: $FfxiFolder"
     }
     if (-not (Test-FfxiFolderLooksValid -Path $FfxiFolder)) {
-        throw "The selected folder does not look like FINAL FANTASY XI. Choose the folder that contains ROM, ROM4, and sound4. Do not choose PlayOnlineViewer, SquareEnix, or PlayOnline. Selected folder: $FfxiFolder"
+        throw "The selected folder does not look like FINAL FANTASY XI. Choose the folder that contains ROM, ROM3, ROM4, and sound4. Do not choose PlayOnlineViewer, SquareEnix, or PlayOnline. Selected folder: $FfxiFolder"
     }
     if (-not (Test-Path -LiteralPath $PlayOnlineFolder -PathType Container)) {
         throw "PlayOnlineViewer folder not found: $PlayOnlineFolder"

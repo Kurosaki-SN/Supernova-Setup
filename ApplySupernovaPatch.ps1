@@ -52,6 +52,7 @@ function Test-FfxiFolderLooksValid {
     return (
         (Test-Path -LiteralPath $Path -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $Path 'ROM') -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'ROM3') -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $Path 'ROM4') -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $Path 'sound4') -PathType Container)
     )
@@ -239,7 +240,7 @@ function Apply-SupernovaPatch {
         throw "FFXI folder not found: $TargetFfxiFolder"
     }
     if (-not (Test-FfxiFolderLooksValid -Path $TargetFfxiFolder)) {
-        throw "The selected folder does not look like FINAL FANTASY XI. Choose the folder that contains ROM, ROM4, and sound4. Do not choose PlayOnlineViewer, SquareEnix, or PlayOnline. Selected folder: $TargetFfxiFolder"
+        throw "The selected folder does not look like FINAL FANTASY XI. Choose the folder that contains ROM, ROM3, ROM4, and sound4. Do not choose PlayOnlineViewer, SquareEnix, or PlayOnline. Selected folder: $TargetFfxiFolder"
     }
 
     New-DirectoryIfMissing -Path $appData

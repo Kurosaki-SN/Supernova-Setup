@@ -367,6 +367,7 @@ if (-not [string]::IsNullOrWhiteSpace($GameInstallFolder)) {
     $gameRootValid = (
         (Test-Path -LiteralPath (Join-Path $GameInstallFolder 'PlayOnlineViewer\pol.exe') -PathType Leaf) -and
         (Test-Path -LiteralPath (Join-Path $GameInstallFolder 'FINAL FANTASY XI\ROM') -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $GameInstallFolder 'FINAL FANTASY XI\ROM3') -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $GameInstallFolder 'FINAL FANTASY XI\ROM4') -PathType Container) -and
         (Test-Path -LiteralPath (Join-Path $GameInstallFolder 'FINAL FANTASY XI\sound4') -PathType Container)
     )
@@ -378,6 +379,7 @@ Add-MissingIfFalse $missing (Test-OptionalPath -Base $PlayOnlineFolder -Child 'x
 Add-MissingIfFalse $missing (Test-RunAsAdminCompatibilityFlag -Path (Join-OptionalPath -Base $PlayOnlineFolder -Child 'pol.exe')) 'pol.exe set to Run as administrator'
 Add-MissingIfFalse $missing (Test-RunAsAdminCompatibilityFlag -Path (Join-OptionalPath -Base $PlayOnlineFolder -Child 'xiloader.exe')) 'xiloader.exe set to Run as administrator'
 Add-MissingIfFalse $missing (Test-OptionalPath -Base $FfxiFolder -Child 'ROM' -PathType Container) 'FINAL FANTASY XI\ROM folder'
+Add-MissingIfFalse $missing (Test-OptionalPath -Base $FfxiFolder -Child 'ROM3' -PathType Container) 'FINAL FANTASY XI\ROM3 folder'
 Add-MissingIfFalse $missing (Test-OptionalPath -Base $FfxiFolder -Child 'ROM4' -PathType Container) 'FINAL FANTASY XI\ROM4 folder'
 Add-MissingIfFalse $missing (Test-OptionalPath -Base $FfxiFolder -Child 'sound4' -PathType Container) 'FINAL FANTASY XI\sound4 folder'
 Add-MissingIfFalse $missing (Test-OptionalPath -Base $FfxiFolder -Child 'ROM4\1\69.dat' -PathType Leaf) 'Supernova DAT representative ROM4\1\69.dat'
