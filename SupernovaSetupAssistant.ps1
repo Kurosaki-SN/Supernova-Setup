@@ -1,5 +1,34 @@
 # Guided setup UI for the Supernova FFXI private server. This is not intended to
 # replace Windower or Ashita; it guides installation and runs safe helper scripts.
+# Catch startup errors too. Without this, a shortcut-launched PowerShell window
+# can close before the player sees the problem.
+trap {
+    $crashRoot = [Environment]::GetFolderPath('LocalApplicationData')
+    if ([string]::IsNullOrWhiteSpace($crashRoot)) {
+        $crashRoot = $env:TEMP
+    }
+    $crashDir = Join-Path $crashRoot 'SupernovaSetupAssistant'
+    $crashLog = Join-Path $crashDir 'StartupCrash.log'
+    try {
+        if (-not (Test-Path -LiteralPath $crashDir)) {
+            New-Item -ItemType Directory -Path $crashDir -Force | Out-Null
+        }
+        Add-Content -LiteralPath $crashLog -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $($_ | Out-String)"
+    }
+    catch {
+        Write-Host "Could not write startup crash log: $($_.Exception.Message)"
+    }
+
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+        [System.Windows.Forms.MessageBox]::Show("Supernova Setup Assistant could not start.`r`n`r`nA crash log was written to:`r`n$crashLog", 'Supernova Setup Assistant', 'OK', 'Error') | Out-Null
+    }
+    catch {
+        Write-Host "Supernova Setup Assistant could not start. Crash log: $crashLog"
+    }
+    exit 1
+}
+
 # Strict mode turns common scripting mistakes into clear errors instead of
 # letting the wizard continue with bad state.
 Set-StrictMode -Version Latest
@@ -56,6 +85,17 @@ function Confirm-Action {
 
 # Default path discovery helpers. These fill in likely install paths but still
 # let the user browse when their install is somewhere else.
+function Add-CandidatePath {
+    param(
+        [System.Collections.Generic.List[string]]$Candidates,
+        [string]$Base,
+        [string]$Child
+    )
+    if (-not [string]::IsNullOrWhiteSpace($Base)) {
+        $Candidates.Add((Join-Path $Base $Child)) | Out-Null
+    }
+}
+
 function Get-KnownPath {
     param([string[]]$Candidates, [string]$Fallback)
     foreach ($candidate in $Candidates) {
@@ -69,30 +109,33 @@ function Get-KnownPath {
 function Get-DefaultPlayOnlineFolder {
     $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
     $pf = [Environment]::GetFolderPath('ProgramFiles')
-    return Get-KnownPath -Candidates @(
-        (Join-Path $pf86 'PlayOnline\SquareEnix\PlayOnlineViewer'),
-        (Join-Path $pf 'PlayOnline\SquareEnix\PlayOnlineViewer'),
-        'E:\PlayOnline\SquareEnix\PlayOnlineViewer'
-    ) -Fallback (Join-Path $pf86 'PlayOnline\SquareEnix\PlayOnlineViewer')
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    Add-CandidatePath -Candidates $candidates -Base $pf86 -Child 'PlayOnline\SquareEnix\PlayOnlineViewer'
+    Add-CandidatePath -Candidates $candidates -Base $pf -Child 'PlayOnline\SquareEnix\PlayOnlineViewer'
+    $candidates.Add('E:\PlayOnline\SquareEnix\PlayOnlineViewer') | Out-Null
+    $fallback = if (-not [string]::IsNullOrWhiteSpace($pf86)) { Join-Path $pf86 'PlayOnline\SquareEnix\PlayOnlineViewer' } else { 'C:\Program Files (x86)\PlayOnline\SquareEnix\PlayOnlineViewer' }
+    return Get-KnownPath -Candidates $candidates.ToArray() -Fallback $fallback
 }
 
 function Get-DefaultFfxiFolder {
     $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
     $pf = [Environment]::GetFolderPath('ProgramFiles')
-    return Get-KnownPath -Candidates @(
-        (Join-Path $pf86 'PlayOnline\SquareEnix\FINAL FANTASY XI'),
-        (Join-Path $pf 'PlayOnline\SquareEnix\FINAL FANTASY XI'),
-        'E:\PlayOnline\SquareEnix\FINAL FANTASY XI'
-    ) -Fallback (Join-Path $pf86 'PlayOnline\SquareEnix\FINAL FANTASY XI')
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    Add-CandidatePath -Candidates $candidates -Base $pf86 -Child 'PlayOnline\SquareEnix\FINAL FANTASY XI'
+    Add-CandidatePath -Candidates $candidates -Base $pf -Child 'PlayOnline\SquareEnix\FINAL FANTASY XI'
+    $candidates.Add('E:\PlayOnline\SquareEnix\FINAL FANTASY XI') | Out-Null
+    $fallback = if (-not [string]::IsNullOrWhiteSpace($pf86)) { Join-Path $pf86 'PlayOnline\SquareEnix\FINAL FANTASY XI' } else { 'C:\Program Files (x86)\PlayOnline\SquareEnix\FINAL FANTASY XI' }
+    return Get-KnownPath -Candidates $candidates.ToArray() -Fallback $fallback
 }
 
 function Get-DefaultWindowerExe {
     $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
-    return Get-KnownPath -Candidates @(
-        (Join-Path $pf86 'Windower4\Windower.exe'),
-        (Join-Path $HOME 'Desktop\Windower4\Windower.exe'),
-        'C:\Windower4\Windower.exe'
-    ) -Fallback (Join-Path $pf86 'Windower4\Windower.exe')
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    Add-CandidatePath -Candidates $candidates -Base $pf86 -Child 'Windower4\Windower.exe'
+    Add-CandidatePath -Candidates $candidates -Base $HOME -Child 'Desktop\Windower4\Windower.exe'
+    $candidates.Add('C:\Windower4\Windower.exe') | Out-Null
+    $fallback = if (-not [string]::IsNullOrWhiteSpace($pf86)) { Join-Path $pf86 'Windower4\Windower.exe' } else { 'C:\Windower4\Windower.exe' }
+    return Get-KnownPath -Candidates $candidates.ToArray() -Fallback $fallback
 }
 
 function Get-DefaultAshitaFolder {
@@ -118,13 +161,15 @@ function Get-DefaultSettings {
     $pol = Get-DefaultPlayOnlineFolder
     $ffxi = Get-DefaultFfxiFolder
     $windowerExe = Get-DefaultWindowerExe
+    $windowerFolder = Split-Path -Parent $windowerExe -ErrorAction SilentlyContinue
+    $windowerSettings = if (-not [string]::IsNullOrWhiteSpace($windowerFolder)) { Join-Path $windowerFolder 'settings.xml' } else { 'settings.xml' }
     [pscustomobject]@{
         Mode = 'Existing Installation'
         GameInstallFolder = Get-DefaultGameInstallFolder
         PlayOnlineFolder = $pol
         FfxiFolder = $ffxi
         WindowerExe = $windowerExe
-        WindowerSettings = Join-Path (Split-Path -Parent $windowerExe) 'settings.xml'
+        WindowerSettings = $windowerSettings
         WindowerProfile = 'Supernova'
         WindowerUsername = ''
         AshitaFolder = Get-DefaultAshitaFolder
@@ -302,6 +347,18 @@ function Test-GameInstallFolderLooksValid {
         (Test-PlayOnlineFolderLooksValid -Path $pol) -and
         (Test-FfxiFolderLooksValid -Path $ffxi)
     )
+}
+
+function Test-ExistingPath {
+    param(
+        [string]$Path,
+        [ValidateSet('Leaf', 'Container')]
+        [string]$PathType
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $false
+    }
+    return Test-Path -LiteralPath $Path -PathType $PathType
 }
 
 function Get-ResolvedGameInstallFolder {
@@ -863,16 +920,16 @@ function Get-ValidationResults {
     $results += New-ValidationResult -Name 'Game install folder contains PlayOnlineViewer and FINAL FANTASY XI' -Passed (Test-GameInstallFolderLooksValid -Path $gameRootBox.Text)
     $results += New-ValidationResult -Name 'Microsoft Visual C++ 2015 x86 runtime is installed' -Passed (Test-Msvc2015RuntimeX86Installed)
     $results += New-ValidationResult -Name 'PlayOnlineViewer folder is selected and contains pol.exe' -Passed (Test-PlayOnlineFolderLooksValid -Path $polBox.Text)
-    $results += New-ValidationResult -Name 'xiloader.exe exists beside pol.exe' -Passed (Test-Path -LiteralPath (Join-Path $polBox.Text 'xiloader.exe') -PathType Leaf)
-    $results += New-ValidationResult -Name 'pol.exe is set to Run as administrator' -Passed (Test-RunAsAdminCompatibilityFlag -Path (Join-Path $polBox.Text 'pol.exe'))
-    $results += New-ValidationResult -Name 'xiloader.exe is set to Run as administrator' -Passed (Test-RunAsAdminCompatibilityFlag -Path (Join-Path $polBox.Text 'xiloader.exe'))
+    $results += New-ValidationResult -Name 'xiloader.exe exists beside pol.exe' -Passed (Test-ExistingPath -Path (Join-CandidatePath $polBox.Text 'xiloader.exe') -PathType Leaf)
+    $results += New-ValidationResult -Name 'pol.exe is set to Run as administrator' -Passed (Test-RunAsAdminCompatibilityFlag -Path (Join-CandidatePath $polBox.Text 'pol.exe'))
+    $results += New-ValidationResult -Name 'xiloader.exe is set to Run as administrator' -Passed (Test-RunAsAdminCompatibilityFlag -Path (Join-CandidatePath $polBox.Text 'xiloader.exe'))
     $results += New-ValidationResult -Name 'FINAL FANTASY XI folder is selected and contains ROM, ROM3, ROM4, and sound4' -Passed (Test-FfxiFolderLooksValid -Path $ffxiBox.Text)
-    $results += New-ValidationResult -Name 'Supernova DAT representative appears installed: ROM4\1\69.dat' -Passed (Test-Path -LiteralPath (Join-Path $ffxiBox.Text 'ROM4\1\69.dat') -PathType Leaf)
-    $results += New-ValidationResult -Name 'Supernova patch representative appears installed: FFXi.dll' -Passed (Test-Path -LiteralPath (Join-Path $ffxiBox.Text 'FFXi.dll') -PathType Leaf)
+    $results += New-ValidationResult -Name 'Supernova DAT representative appears installed: ROM4\1\69.dat' -Passed (Test-ExistingPath -Path (Join-CandidatePath $ffxiBox.Text 'ROM4\1\69.dat') -PathType Leaf)
+    $results += New-ValidationResult -Name 'Supernova patch representative appears installed: FFXi.dll' -Passed (Test-ExistingPath -Path (Join-CandidatePath $ffxiBox.Text 'FFXi.dll') -PathType Leaf)
 
     if ($windowerRadio.Checked) {
-        $results += New-ValidationResult -Name 'Windower.exe is selected' -Passed (Test-Path -LiteralPath $windowerExeBox.Text -PathType Leaf)
-        $results += New-ValidationResult -Name 'Windower settings.xml is selected' -Passed (Test-Path -LiteralPath $windowerSettingsBox.Text -PathType Leaf)
+        $results += New-ValidationResult -Name 'Windower.exe is selected' -Passed (Test-ExistingPath -Path $windowerExeBox.Text -PathType Leaf)
+        $results += New-ValidationResult -Name 'Windower settings.xml is selected' -Passed (Test-ExistingPath -Path $windowerSettingsBox.Text -PathType Leaf)
         $results += New-ValidationResult -Name 'Windower profile uses xiloader.exe and the Supernova server' -Passed (Test-WindowerConfigured)
         $windowerAccountArgsConfigured = Test-WindowerAccountArgsConfigured
         if ($windowerAccountArgsConfigured -or -not [string]::IsNullOrWhiteSpace($windowerUsernameBox.Text)) {
@@ -882,7 +939,7 @@ function Get-ValidationResults {
     elseif ($ashitaRadio.Checked) {
         $ashitaCliPresent = $false
         if (-not [string]::IsNullOrWhiteSpace($ashitaFolderBox.Text)) {
-            $ashitaCliPresent = Test-Path -LiteralPath (Join-Path $ashitaFolderBox.Text 'ashita-cli.exe') -PathType Leaf
+            $ashitaCliPresent = Test-ExistingPath -Path (Join-CandidatePath $ashitaFolderBox.Text 'ashita-cli.exe') -PathType Leaf
         }
         $results += New-ValidationResult -Name 'Ashita folder contains ashita-cli.exe' -Passed $ashitaCliPresent
         $results += New-ValidationResult -Name 'Ashita ffxi-bootmod contains xiloader.exe' -Passed (Test-AshitaBootloaderInstalled)
