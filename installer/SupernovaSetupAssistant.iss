@@ -1,0 +1,60 @@
+; Supernova Setup Assistant installer.
+; This installer only installs the assistant and helper scripts into a
+; user-writable folder. Game-folder writes happen later from the assistant, where
+; the user can see the step, confirm it, and approve UAC only when needed.
+#define MyAppName "Supernova Setup Assistant"
+#define MyAppVersion "1.0.0"
+#define MyAppPublisher "Supernova Community"
+#define MyAppCommand "SupernovaSetupAssistant.cmd"
+
+; Core installer settings. PrivilegesRequired=lowest keeps setup itself from
+; requesting admin rights just to install the assistant.
+[Setup]
+AppId={{B7B946D4-71F7-4778-A092-EE768C4F1A2B}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+DefaultDirName={localappdata}\Supernova Setup Assistant
+DefaultGroupName={#MyAppName}
+AllowNoIcons=yes
+OutputDir=dist
+OutputBaseFilename=SupernovaInstallHelper
+Compression=lzma
+SolidCompression=yes
+WizardStyle=modern
+PrivilegesRequired=lowest
+UninstallDisplayName={#MyAppName}
+
+; Installer language resources.
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+; Only the desktop shortcut is optional. xiloader, DATs, patches, Windower, and
+; Ashita setup are handled by the assistant after install.
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+; Bundled scripts. No Square Enix client files, DATs, xiloader binary, Windower,
+; or Ashita files are redistributed here.
+[Files]
+Source: "..\SupernovaSetupAssistant.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\SupernovaSetupAssistant.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\ApplySupernovaPatch.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\InstallXiloader.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\InstallMsvc2015Runtime.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\InstallAshitaBootloader.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\RemoveVulgarDictionary.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\RepairSupernovaClient.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\ConfigureWindower.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\ConfigureAshita.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\ExportSupernovaDiagnostics.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\update-ffxi\*.png"; DestDir: "{app}\assets\update-ffxi"; Flags: ignoreversion
+
+; Shortcuts point at the assistant wrapper.
+[Icons]
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppCommand}"; WorkingDir: "{app}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppCommand}"; WorkingDir: "{app}"; Tasks: desktopicon
+
+; Offer to open the setup assistant on the final page.
+[Run]
+Filename: "{app}\{#MyAppCommand}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
