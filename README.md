@@ -1,67 +1,102 @@
-# Supernova FFXI Launcher
+# Supernova Setup Assistant
 
-Portable Windows launcher helper for Supernova FFXI.
+Guided Windows setup helper for the Supernova FFXI private server.
 
-This package does not include Final Fantasy XI files, xiloader, Windower, Ashita, or copyrighted game assets. It only helps configure and launch an existing local installation.
+This is not a replacement for Windower or Ashita. Supernova players should configure and play through Windower or Ashita; direct `xiloader.exe` launch is kept only as an advanced support tool.
 
 ## What It Does
 
-- Launches `xiloader.exe` with `--server login.supernovaffxi.com`.
-- Optionally includes `--user` and `--password` for autologin.
-- Saves launcher settings under `%LOCALAPPDATA%\SupernovaFFXILauncher`.
-- Can patch an existing Windower profile by adding:
-  - `<args>--server login.supernovaffxi.com ...</args>`
+- Guides new, existing, and repair/update installs with a step-by-step wizard.
+- Opens the official Square Enix FFXI install page instead of bundling client files: `https://www.playonline.com/ff11us/download/media/install_win.html`.
+- Downloads and installs/verifies Microsoft Visual C++ Redistributable 2015 x86 from Microsoft's official page.
+- Downloads pinned Supernova-compatible `xiloader.exe` v2.0.1, verifies it, backs up any existing copy, and places it beside `pol.exe`.
+- Guides the player to set both `pol.exe` and `xiloader.exe` to **Run as administrator**, then validates both compatibility flags.
+- Opens Windower and Ashita websites for manual download and install. Windower is the recommended play method.
+- Installs Supernova custom DATs and root-level patch files into `FINAL FANTASY XI`.
+- Backs up overwritten files before replacing them.
+- Offers an optional `vulgar2.dic` cleanup that backs up the file before removing it from the selected `FINAL FANTASY XI` folder.
+- Configures a Windower profile named `Supernova` with:
   - `<executable>xiloader.exe</executable>`
-- Can create an Ashita v4 boot config under `config\boot\supernova.ini`.
-- Can download and apply the configured Supernova custom DATs zip and update patch zip, backing up overwritten files first.
-- The installer can optionally download pinned `xiloader.exe` v2.0.1 and place it beside `pol.exe`.
-- The installer can optionally download and apply the custom DATs and patch during installation.
+  - `<args>--server login.supernovaffxi.com</args>`
+- Windower users can update the profile args after account creation to:
+  - `<args>--server login.supernovaffxi.com --user your_username --password your_password</args>`
+- The Windower password is not saved in the assistant settings, but it is written into Windower `settings.xml` when the login args are updated.
+- Writes Ashita `config\boot\supernova.ini` and points it at `ffxi-bootmod\xiloader.exe`.
+- Ashita users are guided to run the Ashita installer, then install the pinned xiloader v2.0.1 bootloader into `ffxi-bootmod`.
+- Ashita configuration sets the boot file to `ffxi-bootmod\xiloader.exe`, first with `--server login.supernovaffxi.com`, then after account creation with `--server login.supernovaffxi.com --user your_username --password your_password`.
+- The Ashita password is not saved in the assistant settings, but it is written into Ashita's profile config when the account command is updated.
+- Exports a diagnostic report with detected paths, hashes, config status, logs, and missing setup requirements.
 
 ## For Players
 
-Regular players do not need Inno Setup. They only need the built installer:
+Players do not need Inno Setup. They only need the built installer:
 
 ```text
-SupernovaFFXILauncherSetup.exe
+SupernovaInstallHelper.exe
 ```
 
-During installation, select `Download and install Supernova-compatible xiloader v2.0.1` to have the installer place the pinned 2.0.x xiloader beside `pol.exe` in PlayOnlineViewer. Existing `xiloader.exe` files are backed up first. This step verifies the official v2.0.1 release MD5.
+Run the installer, then launch **Supernova Setup Assistant**. The assistant installs itself under your user profile and only asks for administrator approval when a selected PlayOnline or FFXI folder is protected by Windows.
 
-Select `Download and install Supernova custom DATs and patch` to have the installer download both Dropbox archives. The custom DAT archive maps DAT/music files into their documented FFXI subfolders, while the update patch archive installs root-level files such as DLLs, config files, and `polboot.exe` directly into the selected `FINAL FANTASY XI` folder. If FFXI or PlayOnline is installed under `Program Files`, Windows may show an administrator prompt for those setup steps.
+## Setup Paths
+
+Choose one of the main wizard flows:
+
+- **New Installation**: opens the official FFXI download page, guides the user to install PlayOnline Viewer and Final Fantasy XI Online, select the parent game install folder that contains both installed folders, run PlayOnline updates, save Existing User settings, install Supernova patch files, walk through Check Files/File Repair with guide screenshots, install the MSVC 2015 x86 runtime, install Supernova DATs, optionally remove `vulgar2.dic`, download xiloader beside `pol.exe`, set both `pol.exe` and `xiloader.exe` to run as administrator, then branches based on the selected play method. Windower users are guided to start Windower, create a profile with the plus button, edit it with the pencil icon, create a desktop shortcut with the pin icon, configure the profile XML, launch the profile to create an account, then update the Windower args with their username and password. Ashita users are guided to install Ashita, install the xiloader bootloader into `ffxi-bootmod`, configure the Supernova entry, create a desktop shortcut, launch the profile to create an account, then update the Ashita command with their username and password.
+- **Existing Installation**: detects your current PlayOnline/FFXI folders, installs or verifies the MSVC runtime and xiloader, applies Supernova files, then configures Windower or Ashita.
+- **Repair / Update Existing Installation**: moves `VTABLE.DAT` into a backup folder, opens PlayOnline, guides you through Check Files > FINAL FANTASY XI > File Repair, then reapplies Supernova files.
+
+The assistant does not automate PlayOnline UI clicks.
+
+The setup is ready only when **Validate Setup** shows every item as `PASS`.
 
 ## Run Without Installer
 
 Double-click:
 
 ```bat
-SupernovaLauncher.cmd
+SupernovaSetupAssistant.cmd
 ```
-
-PowerShell may show a UAC prompt when launching tools if "Run launch target as administrator" is enabled.
-
-## Recommended Setup
-
-1. Install or update Final Fantasy XI normally.
-2. Put `xiloader.exe` version 2.0.1 somewhere local, or use the installer's optional xiloader step.
-3. Open the launcher and confirm the paths on the `Paths` tab.
-4. For Windower, create a profile in Windower first, then use `Tools > Patch Windower Profile`.
-5. For Ashita v4, use `Tools > Copy xiloader to Ashita`, then `Tools > Write Ashita Config`.
-6. Use the `Launch` tab for direct, Windower, or Ashita launch.
 
 ## Developer Build
 
-This section is only for someone rebuilding `SupernovaFFXILauncherSetup.exe` from source. Players who already have the `.exe` installer can ignore it.
+This section is only for someone rebuilding the installer from source. Players who already have `SupernovaInstallHelper.exe` can ignore it.
 
 Install Inno Setup, then compile:
 
 ```powershell
-iscc .\installer\SupernovaLauncher.iss
+iscc .\installer\SupernovaSetupAssistant.iss
 ```
 
-The installer will be written to `installer\dist\SupernovaFFXILauncherSetup.exe`.
+The installer will be written to:
+
+```text
+installer\dist\SupernovaInstallHelper.exe
+```
+
+## Safe Testing
+
+To test without touching your real install, create fake folders inside this project, for example:
+
+```text
+safe-test\GameRoot\PlayOnlineViewer\pol.exe
+safe-test\GameRoot\PlayOnlineViewer\xiloader.exe
+safe-test\GameRoot\FINAL FANTASY XI\ROM
+safe-test\GameRoot\FINAL FANTASY XI\ROM4\1
+safe-test\GameRoot\FINAL FANTASY XI\sound4
+```
+
+Browse the assistant to those copied or fake folders. Do not click the real install/patch buttons against your live game folder unless you intend to change it.
 
 ## Notes
 
-- The password checkbox stores the password using Windows user-scoped encryption. It is intended for convenience, not shared-machine security.
-- Autologin still passes the password to `xiloader` as a process argument because that is how the server setup documents the option.
-- The patch tool extracts the zip into a temporary folder, rejects unsafe relative paths, and backs up files it overwrites.
+- Supernova server host: `login.supernovaffxi.com`.
+- MSVC 2015 x86 runtime is downloaded from Microsoft's official Visual C++ Redistributable page: `https://www.microsoft.com/en-ca/download/details.aspx?id=48145`.
+- Windower download page: `https://www.windower.net/`.
+- Ashita download page: `https://www.ashitaxi.com/`.
+- NOTE: WINDOWER WILL INSTALL INTO WHATEVER DIRECTORY YOU PLACE THE DOWNLOADED EXECUTABLE FROM.
+- NOTE: ASHITA WILL INSTALL INTO WHATEVER DIRECTORY YOU PLACE THE DOWNLOADED EXECUTABLE FROM.
+- xiloader is downloaded from the pinned LandSandBoat v2.0.1 release asset and checked by MD5.
+- Ashita bootloader xiloader is downloaded from the pinned LandSandBoat v2.0.1 release asset and checked by MD5 before being placed in `ffxi-bootmod`.
+- DATs and patch files are downloaded from the configured Supernova Dropbox links at install time.
+- Optional `vulgar2.dic` cleanup only searches inside the selected `FINAL FANTASY XI` folder and stores a backup under `%LOCALAPPDATA%\SupernovaSetupAssistant\Backups`.
+- Logs and backups are stored under `%LOCALAPPDATA%\SupernovaSetupAssistant`.

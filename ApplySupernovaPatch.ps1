@@ -6,9 +6,12 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$FfxiFolder,
 
-    [string]$CustomDatsUrl = 'https://www.dropbox.com/scl/fi/8x60dqiegajxd5fw63viz/supernova-dats.zip?rlkey=pxnn71t6jwcmyfdxudkrx5ywm&e=1&dl=1',
+    [string]$CustomDatsUrl = 'https://www.dropbox.com/scl/fi/8x60dqiegajxd5fw63viz/supernova-dats.zip?dl=1&e=1&file_subpath=%2Fsupernova-dats&rlkey=pxnn71t6jwcmyfdxudkrx5ywm',
 
-    [string]$PatchUrl = 'https://www.dropbox.com/scl/fi/qx4l8slvbgcg76ko4h0bo/FFXI-UpdatePatch.zip?rlkey=ltvhrbzr9vtaf4pq3bm3hlc03&e=1&dl=1'
+    [string]$PatchUrl = 'https://www.dropbox.com/scl/fi/qx4l8slvbgcg76ko4h0bo/FFXI-UpdatePatch.zip?rlkey=ltvhrbzr9vtaf4pq3bm3hlc03&e=1&dl=1',
+
+    [ValidateSet('All', 'CustomDats', 'RootPatch')]
+    [string]$InstallSelection = 'All'
 )
 
 # Catch common mistakes and stop on errors so the installer can
@@ -19,7 +22,7 @@ $ErrorActionPreference = 'Stop'
 # Shared paths used for logs and backups. These live outside the FFXI folder so
 # the patch process keeps a record of what it did without adding extra files to
 # the game directory.
-$appData = Join-Path $env:LOCALAPPDATA 'SupernovaFFXILauncher'
+$appData = Join-Path $env:LOCALAPPDATA 'SupernovaSetupAssistant'
 $backupRoot = Join-Path $appData 'Backups'
 $logPath = Join-Path $appData 'PatchInstall.log'
 
@@ -40,6 +43,18 @@ function Write-PatchLog {
     $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     Add-Content -LiteralPath $logPath -Value "[$stamp] $Message"
     Write-Host $Message
+}
+
+# Validates that the selected folder is the FINAL FANTASY XI folder and not a
+# parent folder or PlayOnlineViewer folder.
+function Test-FfxiFolderLooksValid {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    return (
+        (Test-Path -LiteralPath $Path -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'ROM') -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'ROM4') -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'sound4') -PathType Container)
+    )
 }
 
 # Confirms an extracted file is still inside the temporary extraction folder.
@@ -214,11 +229,17 @@ function Apply-SupernovaPatch {
     param(
         [Parameter(Mandatory = $true)][string]$TargetFfxiFolder,
         [Parameter(Mandatory = $true)][string]$CustomDatsDownloadUrl,
-        [Parameter(Mandatory = $true)][string]$PatchDownloadUrl
+        [Parameter(Mandatory = $true)][string]$PatchDownloadUrl,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('All', 'CustomDats', 'RootPatch')]
+        [string]$Selection
     )
 
     if (-not (Test-Path -LiteralPath $TargetFfxiFolder -PathType Container)) {
         throw "FFXI folder not found: $TargetFfxiFolder"
+    }
+    if (-not (Test-FfxiFolderLooksValid -Path $TargetFfxiFolder)) {
+        throw "The selected folder does not look like FINAL FANTASY XI. Choose the folder that contains ROM, ROM4, and sound4. Do not choose PlayOnlineViewer, SquareEnix, or PlayOnline. Selected folder: $TargetFfxiFolder"
     }
 
     New-DirectoryIfMissing -Path $appData
@@ -227,16 +248,21 @@ function Apply-SupernovaPatch {
     $backupDir = Join-Path $backupRoot (Get-Date -Format 'yyyyMMdd-HHmmss')
     New-DirectoryIfMissing -Path $backupDir
 
-    Install-SupernovaArchive -TargetFfxiFolder $TargetFfxiFolder -DownloadUrl $CustomDatsDownloadUrl -ArchiveLabel 'Supernova custom DATs' -BackupDirectory $backupDir -InstallMode 'CustomDats'
-    Install-SupernovaArchive -TargetFfxiFolder $TargetFfxiFolder -DownloadUrl $PatchDownloadUrl -ArchiveLabel 'Supernova update patch' -BackupDirectory $backupDir -InstallMode 'RootPatch'
+    if ($Selection -eq 'All' -or $Selection -eq 'CustomDats') {
+        Install-SupernovaArchive -TargetFfxiFolder $TargetFfxiFolder -DownloadUrl $CustomDatsDownloadUrl -ArchiveLabel 'Supernova custom DATs' -BackupDirectory $backupDir -InstallMode 'CustomDats'
+    }
 
-    Write-PatchLog "Supernova custom DATs and patch applied. Backups are in: $backupDir"
+    if ($Selection -eq 'All' -or $Selection -eq 'RootPatch') {
+        Install-SupernovaArchive -TargetFfxiFolder $TargetFfxiFolder -DownloadUrl $PatchDownloadUrl -ArchiveLabel 'Supernova update patch' -BackupDirectory $backupDir -InstallMode 'RootPatch'
+    }
+
+    Write-PatchLog "Supernova install selection '$Selection' applied. Backups are in: $backupDir"
 }
 
 # Entry point used by the installer. A zero exit code means success; a non-zero
 # exit code lets Inno Setup show a patch failure message.
 try {
-    Apply-SupernovaPatch -TargetFfxiFolder $FfxiFolder -CustomDatsDownloadUrl $CustomDatsUrl -PatchDownloadUrl $PatchUrl
+    Apply-SupernovaPatch -TargetFfxiFolder $FfxiFolder -CustomDatsDownloadUrl $CustomDatsUrl -PatchDownloadUrl $PatchUrl -Selection $InstallSelection
     exit 0
 }
 catch {

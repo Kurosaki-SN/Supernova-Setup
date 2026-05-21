@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 
 # Logs and backups live outside PlayOnline so players can inspect or restore
 # previous xiloader.exe copies without adding extra files to the game folder.
-$appData = Join-Path $env:LOCALAPPDATA 'SupernovaFFXILauncher'
+$appData = Join-Path $env:LOCALAPPDATA 'SupernovaSetupAssistant'
 $backupRoot = Join-Path $appData 'Backups'
 $logPath = Join-Path $appData 'XiloaderInstall.log'
 
