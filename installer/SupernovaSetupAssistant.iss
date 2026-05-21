@@ -3,7 +3,7 @@
 ; user-writable folder. Game-folder writes happen later from the assistant, where
 ; the user can see the step, confirm it, and approve UAC only when needed.
 #define MyAppName "Supernova Setup Assistant"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "Beta1.0.5"
 #define MyAppPublisher "Supernova Community"
 #define MyAppCommand "SupernovaSetupAssistant.cmd"
 
