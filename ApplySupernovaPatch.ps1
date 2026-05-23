@@ -56,7 +56,13 @@ function Write-PatchLog {
     New-DirectoryIfMissing -Path $appData
     $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     Add-Content -LiteralPath $logPath -Value "[$stamp] $Message"
-    Write-Output $Message
+    try {
+        Write-Host $Message
+    }
+    catch {
+        # The setup assistant tails the log file for progress, so console output
+        # is helpful but not required.
+    }
 }
 
 # Validates that the selected folder is the FINAL FANTASY XI folder and not a

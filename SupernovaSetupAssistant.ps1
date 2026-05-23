@@ -1,5 +1,9 @@
 ﻿# Guided setup UI for the Supernova FFXI private server. This is not intended to
 # replace Windower or Ashita; it guides installation and runs safe helper scripts.
+# Track whether the WinForms app has started. Startup errors should close the
+# process, but later event errors should be logged without taking down the UI.
+$script:UiStarted = $false
+
 # Catch startup errors too. Without this, a shortcut-launched PowerShell window
 # can close before the player sees the problem.
 trap {
@@ -26,6 +30,17 @@ trap {
     }
     catch {
         Write-Host "Could not write startup crash log: $($_.Exception.Message)"
+    }
+
+    if ($script:UiStarted) {
+        try {
+            Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+            [System.Windows.Forms.MessageBox]::Show("Supernova Setup Assistant hit an unexpected UI error but will stay open.`r`n`r`nCrash log:`r`n$crashLog", 'Supernova Setup Assistant', 'OK', 'Error') | Out-Null
+        }
+        catch {
+            Write-Host "Supernova Setup Assistant UI error. Crash log: $crashLog"
+        }
+        continue
     }
 
     try {
@@ -712,9 +727,17 @@ function Invoke-HelperWithProgressDialog {
         Process = $null
         ExitCode = 1
         Done = $false
+        LastDisplayedLineCount = -1
     }
-    $outputQueue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
-
+    $initialLogLineCount = 0
+    if (Test-Path -LiteralPath $LogHint -PathType Leaf) {
+        try {
+            $initialLogLineCount = @((Get-Content -LiteralPath $LogHint -ErrorAction Stop)).Count
+        }
+        catch {
+            Write-AssistantLog "Could not read initial helper log length for '$LogHint': $($_.Exception.Message)"
+        }
+    }
     $progressForm = New-Object System.Windows.Forms.Form
     $progressForm.Text = 'Supernova Setup Assistant'
     $progressForm.StartPosition = 'CenterParent'
@@ -758,10 +781,38 @@ function Invoke-HelperWithProgressDialog {
         $textBox.ScrollToCaret()
     }.GetNewClosure()
 
-    $drainOutput = {
-        $line = ''
-        while ($outputQueue.TryDequeue([ref]$line)) {
-            & $appendLine $line
+    $refreshLog = {
+        if (-not (Test-Path -LiteralPath $LogHint -PathType Leaf)) {
+            return
+        }
+
+        try {
+            $allLines = @((Get-Content -LiteralPath $LogHint -ErrorAction Stop))
+            $newLines = @($allLines | Select-Object -Skip $initialLogLineCount)
+            if ($newLines.Count -eq $state.LastDisplayedLineCount) {
+                return
+            }
+
+            $displayLines = [System.Collections.Generic.List[string]]::new()
+            $displayLines.Add("Running $FriendlyName...") | Out-Null
+            $displayLines.Add("Log: $LogHint") | Out-Null
+            $displayLines.Add('') | Out-Null
+            if ($newLines.Count -gt 0) {
+                foreach ($line in $newLines) {
+                    $displayLines.Add([string]$line) | Out-Null
+                }
+            }
+            else {
+                $displayLines.Add('Waiting for helper log output...') | Out-Null
+            }
+
+            $textBox.Lines = $displayLines.ToArray()
+            $textBox.SelectionStart = $textBox.TextLength
+            $textBox.ScrollToCaret()
+            $state.LastDisplayedLineCount = $newLines.Count
+        }
+        catch {
+            Write-AssistantLog "Could not refresh helper progress log '$LogHint': $($_.Exception.Message)"
         }
     }.GetNewClosure()
 
@@ -805,27 +856,40 @@ function Invoke-HelperWithProgressDialog {
     }.GetNewClosure())
 
     $timer.Add_Tick({
-        & $drainOutput
-        if ($state.Process -and $state.Process.HasExited) {
+        try {
+            & $refreshLog
+            if ($state.Process -and $state.Process.HasExited) {
+                $timer.Stop()
+                try { $state.Process.WaitForExit() } catch {}
+                & $refreshLog
+                $state.ExitCode = $state.Process.ExitCode
+                $state.Done = $true
+                & $appendLine ''
+                if ($state.ExitCode -eq 0) {
+                    & $appendLine 'Completed successfully.'
+                    & $appendLine 'Click Close to return to the Supernova Setup Assistant.'
+                }
+                else {
+                    if ($state.ExitCode -eq -1073741510) {
+                        & $appendLine 'The helper was interrupted or cancelled before it finished.'
+                    }
+                    & $appendLine "Failed with exit code $($state.ExitCode)."
+                    & $appendLine 'Check the log path shown above. You can close this window after taking a photo or copying the message.'
+                }
+                $closeButton.Enabled = $true
+                $progressForm.TopMost = $true
+                $progressForm.Activate()
+            }
+        }
+        catch {
             $timer.Stop()
-            try { $state.Process.WaitForExit() } catch {}
-            & $drainOutput
-            $state.ExitCode = $state.Process.ExitCode
+            Write-AssistantLog "Progress window timer failed: $($_.Exception.Message)"
+            $state.ExitCode = 1
             $state.Done = $true
             & $appendLine ''
-            if ($state.ExitCode -eq 0) {
-                & $appendLine 'Completed successfully.'
-                & $appendLine 'Click Close to return to the Supernova Setup Assistant.'
-            }
-            else {
-                if ($state.ExitCode -eq -1073741510) {
-                    & $appendLine 'The helper was interrupted or cancelled before it finished.'
-                }
-                & $appendLine "Failed with exit code $($state.ExitCode)."
-                & $appendLine 'Check the log path shown above. You can close this window after taking a photo or copying the message.'
-            }
+            & $appendLine "Progress window failed: $($_.Exception.Message)"
+            & $appendLine "The helper log is still here: $LogHint"
             $closeButton.Enabled = $true
-            $progressForm.TopMost = $true
             $progressForm.Activate()
         }
     }.GetNewClosure())
@@ -842,24 +906,14 @@ function Invoke-HelperWithProgressDialog {
             $psi.FileName = $PowerShellExe
             $psi.Arguments = $ArgumentString
             $psi.UseShellExecute = $false
-            $psi.RedirectStandardOutput = $true
-            $psi.RedirectStandardError = $true
+            $psi.RedirectStandardOutput = $false
+            $psi.RedirectStandardError = $false
             $psi.CreateNoWindow = $true
 
             $process = New-Object System.Diagnostics.Process
             $process.StartInfo = $psi
-            $outputHandler = [System.Diagnostics.DataReceivedEventHandler]{
-                param($sender, $eventArgs)
-                if ($null -ne $eventArgs.Data) {
-                    $outputQueue.Enqueue($eventArgs.Data)
-                }
-            }
-            $process.add_OutputDataReceived($outputHandler)
-            $process.add_ErrorDataReceived($outputHandler)
             [void]$process.Start()
             $state.Process = $process
-            $process.BeginOutputReadLine()
-            $process.BeginErrorReadLine()
             $timer.Start()
         }
         catch {
@@ -2826,9 +2880,12 @@ Set-Mode $script:CurrentMode
 $resultBox.Text = "Follow the current step. This box will show action results and validation messages."
 
 try {
+    $script:UiStarted = $true
     [System.Windows.Forms.Application]::Run($form)
 }
 catch {
     Show-Error $_.Exception.Message
 }
-
+finally {
+    $script:UiStarted = $false
+}
