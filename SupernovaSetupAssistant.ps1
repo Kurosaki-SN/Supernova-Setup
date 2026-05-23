@@ -1139,15 +1139,15 @@ function Show-LargeStepImage {
 
     $buttonPanel.Add_Resize({
         $closeButton.Location = New-Object System.Drawing.Point(($buttonPanel.Width - 104), 8)
-    })
+    }.GetNewClosure())
 
-    $closeButton.Add_Click({ $viewer.Close() })
+    $closeButton.Add_Click({ $viewer.Close() }.GetNewClosure())
     $viewer.Add_FormClosing({
         if ($viewerImage.Image) {
             $viewerImage.Image.Dispose()
             $viewerImage.Image = $null
         }
-    })
+    }.GetNewClosure())
 
     $loaded = [System.Drawing.Image]::FromFile($ImagePath)
     try {
@@ -1485,6 +1485,8 @@ function Add-PathRow {
     $browse.Size = New-Object System.Drawing.Size(78, 26)
     $Parent.Controls.Add($browse)
 
+    # WinForms runs this later, after Add-PathRow has returned. GetNewClosure
+    # keeps the row-specific label, textbox, and path kind available to Browse.
     $browse.Add_Click({
         if ($Kind -eq 'windower-exe') {
             $chosen = Browse-File -Title 'Select Windower.exe' -CurrentPath $box.Text -Filter 'Windower.exe|Windower.exe|Executable files (*.exe)|*.exe|All files (*.*)|*.*'
@@ -1515,7 +1517,7 @@ function Add-PathRow {
                 $resultBox.Text = "Path saved. Continue with the current step."
             }
         }
-    })
+    }.GetNewClosure())
     return $box
 }
 
