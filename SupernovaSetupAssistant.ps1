@@ -249,6 +249,15 @@ function Quote-CmdArgument {
     return '"' + $Value.Replace('"', '""') + '"'
 }
 
+# Safely embeds text inside generated PowerShell runner scripts.
+function Quote-PowerShellLiteral {
+    param([string]$Value)
+    if ($null -eq $Value) {
+        $Value = ''
+    }
+    return "'" + $Value.Replace("'", "''") + "'"
+}
+
 function Test-PathNeedsElevation {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -770,37 +779,132 @@ function Invoke-Helper {
     if ($requiresElevation) {
         New-DirectoryIfMissing -Path $script:SettingsDir
         $safeName = $ScriptName -replace '[^A-Za-z0-9.-]+', ''
-        $runnerPath = Join-Path $script:SettingsDir ("Run-$safeName-$PID.cmd")
+        $runnerPath = Join-Path $script:SettingsDir ("Run-$safeName-$PID.ps1")
         $logHint = Get-HelperLogHint -ScriptName $ScriptName
         $title = "Supernova Setup Assistant - $FriendlyName"
         $runner = @(
-            '@echo off',
-            "title $title",
-            'echo Supernova Setup Assistant',
-            "echo Running: $FriendlyName",
-            'echo.',
-            'echo This helper window may take a few minutes while files extract and copy.',
-            'echo Do not close this window unless you want to cancel the current step.',
-            "echo Log: $logHint",
-            'echo.',
-            (Quote-CmdArgument $powerShellExe) + ' ' + $argString,
-            'set EXITCODE=%ERRORLEVEL%',
-            'echo.',
-            'if "%EXITCODE%"=="0" (',
-            '  echo Completed successfully. This window will close shortly.',
-            '  timeout /t 2 /nobreak >nul',
-            ') else (',
-            '  echo Failed with exit code %EXITCODE%.',
-            '  echo Check the log path shown above, then press any key to close this window.',
-            '  pause >nul',
-            ')',
-            'exit /b %EXITCODE%'
+            '$ErrorActionPreference = ''Stop''',
+            'Add-Type -AssemblyName System.Windows.Forms',
+            'Add-Type -AssemblyName System.Drawing',
+            "[System.Windows.Forms.Application]::EnableVisualStyles()",
+            '$powerShellExe = ' + (Quote-PowerShellLiteral $powerShellExe),
+            '$helperArguments = ' + (Quote-PowerShellLiteral $argString),
+            '$friendlyName = ' + (Quote-PowerShellLiteral $FriendlyName),
+            '$logHint = ' + (Quote-PowerShellLiteral $logHint),
+            '$script:ExitCode = 1',
+            '$script:OutputQueue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()',
+            'function Add-ProgressLine {',
+            '    param([string]$Line)',
+            '    if ($null -eq $Line) { return }',
+            '    $textBox.AppendText($Line + [Environment]::NewLine)',
+            '    $textBox.SelectionStart = $textBox.TextLength',
+            '    $textBox.ScrollToCaret()',
+            '    [System.Windows.Forms.Application]::DoEvents()',
+            '}',
+            'function Drain-ProgressOutput {',
+            '    $line = ''''',
+            '    while ($script:OutputQueue.TryDequeue([ref]$line)) {',
+            '        Add-ProgressLine $line',
+            '    }',
+            '}',
+            '$form = New-Object System.Windows.Forms.Form',
+            '$form.Text = ''Supernova Setup Assistant''',
+            '$form.StartPosition = ''CenterScreen''',
+            '$form.Size = New-Object System.Drawing.Size(760, 520)',
+            '$form.MinimumSize = New-Object System.Drawing.Size(620, 400)',
+            '$form.TopMost = $true',
+            '$form.Font = New-Object System.Drawing.Font(''Segoe UI'', 9)',
+            '$header = New-Object System.Windows.Forms.Label',
+            '$header.Dock = ''Top''',
+            '$header.Height = 72',
+            '$header.Padding = New-Object System.Windows.Forms.Padding(12, 10, 12, 0)',
+            '$header.Text = "Running: $friendlyName`r`nThis window is elevated by Windows UAC. Please leave it open until the step completes.`r`nLog: $logHint"',
+            '$form.Controls.Add($header)',
+            '$textBox = New-Object System.Windows.Forms.TextBox',
+            '$textBox.Multiline = $true',
+            '$textBox.ReadOnly = $true',
+            '$textBox.ScrollBars = ''Vertical''',
+            '$textBox.Dock = ''Fill''',
+            '$textBox.BackColor = [System.Drawing.Color]::White',
+            '$form.Controls.Add($textBox)',
+            '$buttonPanel = New-Object System.Windows.Forms.Panel',
+            '$buttonPanel.Dock = ''Bottom''',
+            '$buttonPanel.Height = 48',
+            '$form.Controls.Add($buttonPanel)',
+            '$closeButton = New-Object System.Windows.Forms.Button',
+            '$closeButton.Text = ''Close''',
+            '$closeButton.Enabled = $false',
+            '$closeButton.Size = New-Object System.Drawing.Size(100, 30)',
+            '$closeButton.Anchor = [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Top',
+            '$buttonPanel.Controls.Add($closeButton)',
+            '$buttonPanel.Add_Resize({',
+            '    $closeButton.Location = New-Object System.Drawing.Point(($buttonPanel.Width - 116), 9)',
+            '})',
+            '$closeButton.Add_Click({ $form.Close() })',
+            '$form.Add_Shown({',
+            '    $form.Activate()',
+            '    $buttonPanel.PerformLayout()',
+            '    Add-ProgressLine "Starting $friendlyName..."',
+            '    Add-ProgressLine "Do not close this window unless you want to cancel the current step."',
+            '    Add-ProgressLine ""',
+            '    try {',
+            '        $psi = New-Object System.Diagnostics.ProcessStartInfo',
+            '        $psi.FileName = $powerShellExe',
+            '        $psi.Arguments = $helperArguments',
+            '        $psi.UseShellExecute = $false',
+            '        $psi.RedirectStandardOutput = $true',
+            '        $psi.RedirectStandardError = $true',
+            '        $psi.CreateNoWindow = $true',
+            '        $process = New-Object System.Diagnostics.Process',
+            '        $process.StartInfo = $psi',
+            '        $outputHandler = [System.Diagnostics.DataReceivedEventHandler]{',
+            '            param($sender, $eventArgs)',
+            '            if ($null -ne $eventArgs.Data) { $script:OutputQueue.Enqueue($eventArgs.Data) }',
+            '        }',
+            '        $process.add_OutputDataReceived($outputHandler)',
+            '        $process.add_ErrorDataReceived($outputHandler)',
+            '        [void]$process.Start()',
+            '        $process.BeginOutputReadLine()',
+            '        $process.BeginErrorReadLine()',
+            '        while (-not $process.HasExited) {',
+            '            Drain-ProgressOutput',
+            '            Start-Sleep -Milliseconds 100',
+            '        }',
+            '        $process.WaitForExit()',
+            '        Drain-ProgressOutput',
+            '        $script:ExitCode = $process.ExitCode',
+            '        Add-ProgressLine ""',
+            '        if ($script:ExitCode -eq 0) {',
+            '            Add-ProgressLine "Completed successfully. This window will close shortly."',
+            '            $closeTimer = New-Object System.Windows.Forms.Timer',
+            '            $closeTimer.Interval = 2500',
+            '            $closeTimer.Add_Tick({ $closeTimer.Stop(); $form.Close() })',
+            '            $closeTimer.Start()',
+            '        }',
+            '        else {',
+            '            Add-ProgressLine "Failed with exit code $script:ExitCode."',
+            '            Add-ProgressLine "Check the log path shown above. You can close this window after taking a photo or copying the message."',
+            '            $closeButton.Enabled = $true',
+            '            $form.TopMost = $true',
+            '            $form.Activate()',
+            '        }',
+            '    }',
+            '    catch {',
+            '        $script:ExitCode = 1',
+            '        Add-ProgressLine "Failed to run helper: $($_.Exception.Message)"',
+            '        $closeButton.Enabled = $true',
+            '        $form.TopMost = $true',
+            '        $form.Activate()',
+            '    }',
+            '})',
+            '[System.Windows.Forms.Application]::Run($form)',
+            'exit $script:ExitCode'
         )
-        Set-Content -LiteralPath $runnerPath -Value $runner -Encoding ASCII
+        Set-Content -LiteralPath $runnerPath -Value $runner -Encoding UTF8
 
         $startParams = @{
-            FilePath = 'cmd.exe'
-            ArgumentList = @('/d', '/c', (Quote-CmdArgument $runnerPath))
+            FilePath = $powerShellExe
+            ArgumentList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runnerPath)
             Wait = $true
             PassThru = $true
             Verb = 'runas'
