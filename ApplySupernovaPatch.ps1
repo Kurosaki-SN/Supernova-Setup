@@ -19,6 +19,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Dropbox and other modern download hosts require TLS 1.2 on many Windows
+# systems. Set it explicitly so older PowerShell defaults do not stall/fail.
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+}
+catch {
+    Write-Host "Could not force TLS 1.2: $($_.Exception.Message)"
+}
+
 # Shared paths used for logs and backups. These live outside the FFXI folder so
 # the patch process keeps a record of what it did without adding extra files to
 # the game directory.
@@ -173,7 +182,7 @@ function Install-SupernovaArchive {
         $previousProgressPreference = $ProgressPreference
         try {
             $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipPath -UseBasicParsing
+            Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipPath -UseBasicParsing -TimeoutSec 600
         }
         finally {
             $ProgressPreference = $previousProgressPreference

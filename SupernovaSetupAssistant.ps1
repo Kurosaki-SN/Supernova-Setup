@@ -184,6 +184,7 @@ function Get-DefaultSettings {
         AshitaFolder = Get-DefaultAshitaFolder
         AshitaUsername = ''
         SelectedLauncher = 'Windower'
+        StepCompletions = @{}
     }
 }
 
@@ -223,6 +224,7 @@ function Save-Settings {
         AshitaFolder = $ashitaFolderBox.Text
         AshitaUsername = $ashitaUsernameBox.Text
         SelectedLauncher = if ($windowerRadio.Checked) { 'Windower' } else { 'Ashita' }
+        StepCompletions = $script:StepCompletions
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $script:SettingsPath -Encoding UTF8
 }
 
@@ -234,6 +236,14 @@ function Quote-Argument {
         return '""'
     }
     return '"' + $Value.Replace('"', '\"') + '"'
+}
+
+function Quote-CmdArgument {
+    param([string]$Value)
+    if ($null -eq $Value) {
+        return '""'
+    }
+    return '"' + $Value.Replace('"', '""') + '"'
 }
 
 function Test-PathNeedsElevation {
@@ -653,6 +663,11 @@ function Invoke-Helper {
         throw "Helper script missing: $scriptPath"
     }
 
+    $powerShellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path -LiteralPath $powerShellExe -PathType Leaf)) {
+        $powerShellExe = 'powershell.exe'
+    }
+
     $argParts = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Quote-Argument $scriptPath))
     foreach ($key in $Arguments.Keys) {
         $value = $Arguments[$key]
@@ -672,7 +687,7 @@ function Invoke-Helper {
 
     if ($CaptureOutput -and -not $requiresElevation) {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = 'powershell.exe'
+        $psi.FileName = $powerShellExe
         $psi.Arguments = $argString
         $psi.UseShellExecute = $false
         $psi.RedirectStandardOutput = $true
@@ -701,13 +716,50 @@ function Invoke-Helper {
     }
 
     $startParams = @{
-        FilePath = 'powershell.exe'
+        FilePath = $powerShellExe
         ArgumentList = $argString
         Wait = $true
         PassThru = $true
     }
     if ($requiresElevation) {
-        $startParams.Verb = 'runas'
+        New-DirectoryIfMissing -Path $script:SettingsDir
+        $safeName = $ScriptName -replace '[^A-Za-z0-9.-]+', ''
+        $runnerPath = Join-Path $script:SettingsDir ("Run-$safeName-$PID.cmd")
+        $logHint = Get-HelperLogHint -ScriptName $ScriptName
+        $title = "Supernova Setup Assistant - $FriendlyName"
+        $runner = @(
+            '@echo off',
+            "title $title",
+            'echo Supernova Setup Assistant',
+            "echo Running: $FriendlyName",
+            'echo.',
+            'echo This helper window may take a few minutes while files download, extract, and copy.',
+            'echo Do not close this window unless you want to cancel the current step.',
+            "echo Log: $logHint",
+            'echo.',
+            (Quote-CmdArgument $powerShellExe) + ' ' + $argString,
+            'set EXITCODE=%ERRORLEVEL%',
+            'echo.',
+            'if "%EXITCODE%"=="0" (',
+            '  echo Completed successfully. This window will close shortly.',
+            '  timeout /t 2 /nobreak >nul',
+            ') else (',
+            '  echo Failed with exit code %EXITCODE%.',
+            '  echo Check the log path shown above, then press any key to close this window.',
+            '  pause >nul',
+            ')',
+            'exit /b %EXITCODE%'
+        )
+        Set-Content -LiteralPath $runnerPath -Value $runner -Encoding ASCII
+
+        $startParams = @{
+            FilePath = 'cmd.exe'
+            ArgumentList = @('/d', '/c', (Quote-CmdArgument $runnerPath))
+            Wait = $true
+            PassThru = $true
+            Verb = 'runas'
+            WindowStyle = 'Normal'
+        }
     }
     try {
         $p = Start-Process @startParams
@@ -721,6 +773,9 @@ function Invoke-Helper {
 
     if ($p.ExitCode -ne 0) {
         throw "$FriendlyName did not finish successfully. The assistant has not marked setup complete. Exit code: $($p.ExitCode). Log: $(Get-HelperLogHint -ScriptName $ScriptName)"
+    }
+    if ($requiresElevation -and (Test-Path -LiteralPath $runnerPath -PathType Leaf)) {
+        Remove-Item -LiteralPath $runnerPath -Force -ErrorAction SilentlyContinue
     }
     return ''
 }
@@ -982,6 +1037,167 @@ function Show-Validation {
     return $complete
 }
 
+function ConvertTo-StepCompletionTable {
+    param($Value)
+
+    $table = @{}
+    if ($null -eq $Value) {
+        return $table
+    }
+
+    if ($Value -is [hashtable]) {
+        foreach ($key in $Value.Keys) {
+            $table[[string]$key] = [string]$Value[$key]
+        }
+        return $table
+    }
+
+    foreach ($property in $Value.PSObject.Properties) {
+        $table[[string]$property.Name] = [string]$property.Value
+    }
+    return $table
+}
+
+function Get-CurrentStep {
+    if ($stepsList.SelectedIndex -lt 0 -or $stepsList.SelectedIndex -ge $script:CurrentSteps.Count) {
+        return $null
+    }
+    return $script:CurrentSteps[$stepsList.SelectedIndex]
+}
+
+function Get-StepKey {
+    param($Step)
+
+    if (-not $Step) {
+        return ''
+    }
+
+    $methodPart = ''
+    if ($script:CurrentMode -eq 'New Installation') {
+        $methodPart = Get-SelectedPlayMethod
+    }
+    return "$($script:CurrentMode)|$methodPart|$($Step.Title)"
+}
+
+function Test-ManualStepConfirmed {
+    param($Step)
+
+    $key = Get-StepKey -Step $Step
+    return (-not [string]::IsNullOrWhiteSpace($key) -and $script:StepCompletions.ContainsKey($key))
+}
+
+function Mark-StepComplete {
+    param($Step)
+
+    $key = Get-StepKey -Step $Step
+    if ([string]::IsNullOrWhiteSpace($key)) {
+        return
+    }
+
+    $script:StepCompletions[$key] = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+    try { Save-Settings } catch { Write-AssistantLog "Failed to save step completion: $($_.Exception.Message)" }
+}
+
+function New-StepCompletionCheck {
+    param([bool]$Passed, [string]$Message)
+    return [pscustomobject]@{
+        Passed = $Passed
+        Message = $Message
+    }
+}
+
+function Test-StepCompletion {
+    param($Step)
+
+    if (-not $Step) {
+        return New-StepCompletionCheck -Passed $false -Message 'No step is selected.'
+    }
+
+    $title = [string]$Step.Title
+    switch -Wildcard ($title) {
+        '1. Download FFXI and PlayOnline*' {
+            return New-StepCompletionCheck -Passed (Test-ManualStepConfirmed -Step $Step) -Message 'Click Confirm Step Done after downloading the official FFXI installer files.'
+        }
+        '2. Install FFXI and PlayOnline*' {
+            return New-StepCompletionCheck -Passed (Test-GameInstallFolderLooksValid -Path $gameRootBox.Text) -Message 'Select the parent game install folder that contains both PlayOnlineViewer and FINAL FANTASY XI.'
+        }
+        '5. Install patch files*' {
+            return New-StepCompletionCheck -Passed (Test-ExistingPath -Path (Join-CandidatePath $ffxiBox.Text 'FFXi.dll') -PathType Leaf) -Message 'Install Patch Files must finish before continuing.'
+        }
+        '10. Install MSVC 2015 x86 runtime*' {
+            return New-StepCompletionCheck -Passed (Test-Msvc2015RuntimeX86Installed) -Message 'Install or verify the Microsoft Visual C++ 2015 x86 runtime.'
+        }
+        '11. Install Supernova DATs*' {
+            return New-StepCompletionCheck -Passed (Test-ExistingPath -Path (Join-CandidatePath $ffxiBox.Text 'ROM4\1\69.dat') -PathType Leaf) -Message 'Install Supernova DATs must finish before continuing.'
+        }
+        '12. Download and install xiloader*' {
+            return New-StepCompletionCheck -Passed (Test-ExistingPath -Path (Join-CandidatePath $polBox.Text 'xiloader.exe') -PathType Leaf) -Message 'Install xiloader before continuing.'
+        }
+        '13. Set pol.exe and xiloader.exe*' {
+            $ok = (Test-RunAsAdminCompatibilityFlag -Path (Join-CandidatePath $polBox.Text 'pol.exe')) -and (Test-RunAsAdminCompatibilityFlag -Path (Join-CandidatePath $polBox.Text 'xiloader.exe'))
+            return New-StepCompletionCheck -Passed $ok -Message 'Set both pol.exe and xiloader.exe to Run as administrator before continuing.'
+        }
+        '15. Start Windower*' {
+            return New-StepCompletionCheck -Passed (Test-ExistingPath -Path $windowerExeBox.Text -PathType Leaf) -Message 'Select Windower.exe or install Windower before continuing.'
+        }
+        '16. Create a Windower profile*' {
+            return New-StepCompletionCheck -Passed (Test-WindowerProfileExists) -Message "Create the Windower profile named '$($windowerProfileBox.Text)', then continue."
+        }
+        '18. Configure Windower profile XML*' {
+            return New-StepCompletionCheck -Passed (Test-WindowerConfigured) -Message 'Configure Windower before continuing.'
+        }
+        '20. Add Windower login args*' {
+            $ok = (Test-WindowerAccountArgsConfigured) -or (Test-ManualStepConfirmed -Step $Step)
+            return New-StepCompletionCheck -Passed $ok -Message 'Update Windower args, or click Confirm Step Done if you want to skip saved login args.'
+        }
+        '15. Install and start Ashita*' {
+            return New-StepCompletionCheck -Passed (Test-ExistingPath -Path (Join-CandidatePath $ashitaFolderBox.Text 'ashita-cli.exe') -PathType Leaf) -Message 'Select the Ashita folder that contains ashita-cli.exe before continuing.'
+        }
+        '16. Install Ashita xiloader bootloader*' {
+            return New-StepCompletionCheck -Passed (Test-AshitaBootloaderInstalled) -Message 'Install the Ashita xiloader bootloader before continuing.'
+        }
+        '17. Configure Ashita Supernova entry*' {
+            return New-StepCompletionCheck -Passed (Test-AshitaConfigured) -Message 'Configure Ashita before continuing.'
+        }
+        '20. Add Ashita account command*' {
+            return New-StepCompletionCheck -Passed (Test-AshitaAccountCommandConfigured) -Message 'Update the Ashita account command before continuing.'
+        }
+        '1. Select folders*' {
+            $ok = (Test-PlayOnlineFolderLooksValid -Path $polBox.Text) -and (Test-FfxiFolderLooksValid -Path $ffxiBox.Text)
+            return New-StepCompletionCheck -Passed $ok -Message 'Select valid PlayOnlineViewer and FINAL FANTASY XI folders before continuing.'
+        }
+        '2. Install required runtime and xiloader*' {
+            $ok = (Test-Msvc2015RuntimeX86Installed) -and (Test-ExistingPath -Path (Join-CandidatePath $polBox.Text 'xiloader.exe') -PathType Leaf)
+            return New-StepCompletionCheck -Passed $ok -Message 'Install the required runtime and xiloader before continuing.'
+        }
+        '3. Set pol.exe and xiloader.exe*' {
+            $ok = (Test-RunAsAdminCompatibilityFlag -Path (Join-CandidatePath $polBox.Text 'pol.exe')) -and (Test-RunAsAdminCompatibilityFlag -Path (Join-CandidatePath $polBox.Text 'xiloader.exe'))
+            return New-StepCompletionCheck -Passed $ok -Message 'Set both pol.exe and xiloader.exe to Run as administrator before continuing.'
+        }
+        '4. Install Supernova files*' {
+            $ok = (Test-ExistingPath -Path (Join-CandidatePath $ffxiBox.Text 'FFXi.dll') -PathType Leaf) -and (Test-ExistingPath -Path (Join-CandidatePath $ffxiBox.Text 'ROM4\1\69.dat') -PathType Leaf)
+            return New-StepCompletionCheck -Passed $ok -Message 'Install both patch files and Supernova DATs before continuing.'
+        }
+        '5. Configure Windower or Ashita*' {
+            $ok = if ((Get-SelectedPlayMethod) -eq 'Ashita') { Test-AshitaConfigured } else { Test-WindowerConfigured }
+            return New-StepCompletionCheck -Passed $ok -Message 'Configure the selected Windower or Ashita profile before continuing.'
+        }
+        '1. Confirm repair*' {
+            return New-StepCompletionCheck -Passed (Test-ManualStepConfirmed -Step $Step) -Message 'Prepare File Repair must complete before continuing.'
+        }
+        '3. Reapply Supernova files*' {
+            $ok = (Test-ExistingPath -Path (Join-CandidatePath $ffxiBox.Text 'FFXi.dll') -PathType Leaf) -and (Test-ExistingPath -Path (Join-CandidatePath $ffxiBox.Text 'ROM4\1\69.dat') -PathType Leaf)
+            return New-StepCompletionCheck -Passed $ok -Message 'Reapply patch files and Supernova DATs before continuing.'
+        }
+        '*Validate*' {
+            return New-StepCompletionCheck -Passed (Show-Validation) -Message 'Validation must pass before setup is complete.'
+        }
+        default {
+            return New-StepCompletionCheck -Passed (Test-ManualStepConfirmed -Step $Step) -Message 'Click Confirm Step Done after completing this manual step.'
+        }
+    }
+}
+
 # Wizard mode and step navigation helpers. New Installation dynamically appends
 # either the Windower branch or the Ashita branch based on the selected method.
 function Set-Mode {
@@ -1057,7 +1273,11 @@ function Update-StepList {
         }
     }
 
+    $script:SuppressStepSelectionChanged = $true
     $stepsList.SelectedIndex = $newIndex
+    $script:LastAllowedStepIndex = $newIndex
+    $script:SuppressStepSelectionChanged = $false
+    Update-StepView
 }
 
 # Guide-image and conditional-control helpers. Some steps show screenshots, and
@@ -1169,26 +1389,30 @@ function Get-StepActionKeys {
 
     $title = [string]$Step.Title
     switch -Wildcard ($title) {
-        '1. Download FFXI and PlayOnline*' { return @('official') }
+        '1. Download FFXI and PlayOnline*' { return @('official', 'confirmManual') }
         '2. Install FFXI and PlayOnline*' { return @('detect') }
-        '3. Run PlayOnline update*' { return @('pol') }
-        '4. Save Existing User settings*' { return @('pol') }
+        '3. Run PlayOnline update*' { return @('pol', 'confirmManual') }
+        '4. Save Existing User settings*' { return @('pol', 'confirmManual') }
         '5. Install patch files*' { return @('detect', 'installPatch') }
-        '6. Click Check Files*' { return @('pol') }
-        '7. Select FINAL FANTASY XI*' { return @() }
-        '8. Run Check Files*' { return @() }
-        '9. Run File Repair*' { return @() }
+        '6. Click Check Files*' { return @('pol', 'confirmManual') }
+        '7. Select FINAL FANTASY XI*' { return @('confirmManual') }
+        '8. Run Check Files*' { return @('confirmManual') }
+        '9. Run File Repair*' { return @('confirmManual') }
         '10. Install MSVC 2015 x86 runtime*' { return @('installMsvc') }
         '11. Install Supernova DATs*' { return @('installDats', 'deleteVulgar') }
         '12. Download and install xiloader*' { return @('detect', 'installXiloader') }
         '13. Set pol.exe and xiloader.exe*' { return @('openPolFolder') }
-        '14. Download Windower or Ashita*' { return @('windowerWebsite', 'ashitaWebsite') }
+        '14. Download Windower or Ashita*' { return @('windowerWebsite', 'ashitaWebsite', 'confirmManual') }
         '15. Start Windower*' { return @('openWindower') }
         '18. Configure Windower profile XML*' { return @('configureWindower') }
-        '20. Add Windower login args*' { return @('updateWindowerArgs') }
+        '17. Create a Windower desktop shortcut*' { return @('confirmManual') }
+        '19. Launch Windower profile and create account*' { return @('confirmManual') }
+        '20. Add Windower login args*' { return @('updateWindowerArgs', 'confirmManual') }
         '15. Install and start Ashita*' { return @('ashitaWebsite') }
         '16. Install Ashita xiloader bootloader*' { return @('installAshitaBootloader') }
         '17. Configure Ashita Supernova entry*' { return @('configureAshita') }
+        '18. Create Ashita desktop shortcut*' { return @('confirmManual') }
+        '19. Launch Ashita profile and create account*' { return @('confirmManual') }
         '20. Add Ashita account command*' { return @('updateAshitaCommand') }
         '21. Validate*' { return @('validate', 'diagnostic') }
         '1. Select folders*' { return @('detect') }
@@ -1203,7 +1427,7 @@ function Get-StepActionKeys {
         }
         '6. Validate*' { return @('validate', 'diagnostic') }
         '1. Confirm repair*' { return @('repairPrep') }
-        '2. Run PlayOnline repair*' { return @('pol') }
+        '2. Run PlayOnline repair*' { return @('pol', 'confirmManual') }
         '3. Reapply Supernova files*' { return @('installPatch', 'installDats') }
         '4. Revalidate*' { return @('validate', 'diagnostic') }
         default { return @() }
@@ -1349,11 +1573,141 @@ function Update-StepView {
     }
 }
 
+function Select-StepIndex {
+    param([int]$Index)
+
+    if ($Index -lt 0 -or $Index -ge $stepsList.Items.Count) {
+        return
+    }
+
+    $script:SuppressStepSelectionChanged = $true
+    $stepsList.SelectedIndex = $Index
+    $script:LastAllowedStepIndex = $Index
+    $script:SuppressStepSelectionChanged = $false
+    Update-StepView
+}
+
+function Request-DevUnlock {
+    $dialog = New-Object System.Windows.Forms.Form
+    $dialog.Text = 'Developer Unlock'
+    $dialog.StartPosition = 'CenterParent'
+    $dialog.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialog.MinimizeBox = $false
+    $dialog.MaximizeBox = $false
+    $dialog.Size = New-Object System.Drawing.Size(340, 150)
+    $dialog.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = 'Enter developer password to jump between steps.'
+    $label.Location = New-Object System.Drawing.Point(12, 14)
+    $label.Size = New-Object System.Drawing.Size(300, 22)
+    $dialog.Controls.Add($label)
+
+    $passwordBox = New-Object System.Windows.Forms.TextBox
+    $passwordBox.Location = New-Object System.Drawing.Point(14, 44)
+    $passwordBox.Size = New-Object System.Drawing.Size(294, 22)
+    $passwordBox.UseSystemPasswordChar = $true
+    $dialog.Controls.Add($passwordBox)
+
+    $okButton = New-Object System.Windows.Forms.Button
+    $okButton.Text = 'Unlock'
+    $okButton.Location = New-Object System.Drawing.Point(138, 78)
+    $okButton.Size = New-Object System.Drawing.Size(80, 28)
+    $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $dialog.AcceptButton = $okButton
+    $dialog.Controls.Add($okButton)
+
+    $cancelButton = New-Object System.Windows.Forms.Button
+    $cancelButton.Text = 'Cancel'
+    $cancelButton.Location = New-Object System.Drawing.Point(228, 78)
+    $cancelButton.Size = New-Object System.Drawing.Size(80, 28)
+    $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $dialog.CancelButton = $cancelButton
+    $dialog.Controls.Add($cancelButton)
+
+    $result = $dialog.ShowDialog($form)
+    $password = $passwordBox.Text
+    $dialog.Dispose()
+
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK -and $password -eq 'SNhelpDev') {
+        $script:DevUnlocked = $true
+        $resultBox.Text = 'Developer step jump unlocked for this assistant session.'
+        return $true
+    }
+
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+        Show-Error 'Incorrect developer password.'
+    }
+    return $false
+}
+
+function Handle-StepSelectionChanged {
+    if ($script:SuppressStepSelectionChanged) {
+        Update-StepView
+        return
+    }
+
+    if ($stepsList.SelectedIndex -eq $script:LastAllowedStepIndex) {
+        Update-StepView
+        return
+    }
+
+    if ($script:DevUnlocked -or (Request-DevUnlock)) {
+        $script:LastAllowedStepIndex = $stepsList.SelectedIndex
+        Update-StepView
+        return
+    }
+
+    $script:SuppressStepSelectionChanged = $true
+    $stepsList.SelectedIndex = $script:LastAllowedStepIndex
+    $script:SuppressStepSelectionChanged = $false
+    Update-StepView
+}
+
+function Complete-CurrentManualStep {
+    $step = Get-CurrentStep
+    if (-not $step) {
+        return
+    }
+
+    Mark-StepComplete -Step $step
+    $resultBox.Text = "Marked complete:`r`n$($step.Title)`r`n`r`nClick Next Step -> to continue."
+}
+
+function Mark-CurrentStepCompleteIfPassed {
+    $step = Get-CurrentStep
+    if (-not $step) {
+        return
+    }
+
+    $check = Test-StepCompletion -Step $step
+    if ($check.Passed) {
+        Mark-StepComplete -Step $step
+    }
+}
+
+function Move-ToNextStep {
+    if ($stepsList.SelectedIndex -lt 0 -or $stepsList.SelectedIndex -ge ($stepsList.Items.Count - 1)) {
+        return
+    }
+
+    $step = Get-CurrentStep
+    $check = Test-StepCompletion -Step $step
+    if (-not $check.Passed) {
+        $resultBox.Text = "This step is not complete yet:`r`n$($step.Title)`r`n`r`n$($check.Message)"
+        Show-Info "This step is not complete yet.`r`n`r`n$($check.Message)"
+        return
+    }
+
+    Mark-StepComplete -Step $step
+    Select-StepIndex -Index ($stepsList.SelectedIndex + 1)
+}
+
 # Step definitions shown in the wizard. These are user-facing instructions and
 # keep manual PlayOnline/Windower/Ashita work explicit instead of automating UI.
 $script:StepSets = @{
     'New Installation' = @(
-        [pscustomobject]@{ Title = '1. Download FFXI and PlayOnline'; Body = "Manual step: click Open FFXI Download. It opens the official Square Enix page: $script:OfficialFfxiInstallUrl. Download and install the PlayOnline Viewer and FINAL FANTASY XI files yourself, then return to this assistant." },
+        [pscustomobject]@{ Title = '1. Download FFXI and PlayOnline'; Body = "Manual step: click Open FFXI Download. It opens the official Square Enix page: $script:OfficialFfxiInstallUrl. Download the FFXI and PlayOnline installer files yourself, then return here and click Confirm Step Done." },
         [pscustomobject]@{ Title = '2. Install FFXI and PlayOnline'; Body = 'Manual step: from the files you downloaded, install these components: PlayOnline Viewer and Final Fantasy XI Online. Then use the Game install folder Browse button to select the parent folder that contains both PlayOnlineViewer and FINAL FANTASY XI. Finish both installers and select that folder before clicking Next Step.' },
         [pscustomobject]@{ Title = '3. Run PlayOnline update'; Body = 'Manual step: run PlayOnline Viewer and let it update completely. If PlayOnline restarts during the update, let it finish before clicking Next Step.' },
         [pscustomobject]@{ Title = '4. Save Existing User settings'; Body = 'Manual step: after PlayOnline updates and restarts, choose Existing User. Enter any Member Name you want. For the PlayOnline ID and password, enter 1234567, or use any values you prefer. Save the settings, then return here.' },
@@ -1405,6 +1759,10 @@ $script:StepSets = @{
 $settings = Load-Settings
 $script:CurrentMode = $settings.Mode
 $script:CurrentSteps = @()
+$script:StepCompletions = ConvertTo-StepCompletionTable -Value $settings.StepCompletions
+$script:DevUnlocked = $false
+$script:SuppressStepSelectionChanged = $false
+$script:LastAllowedStepIndex = 0
 
 # Main form and top-level layout.
 $form = New-Object System.Windows.Forms.Form
@@ -1673,6 +2031,7 @@ $openWindowerButton = Add-ActionButton -Text 'Open Windower' -X 14 -Y 184
 $installAshitaBootloaderButton = Add-ActionButton -Text 'Install Ashita Bootloader' -X 184 -Y 184
 $updateAshitaCommandButton = Add-ActionButton -Text 'Update Ashita Command' -X 354 -Y 184
 $updateWindowerArgsButton = Add-ActionButton -Text 'Update Windower Args' -X 524 -Y 184
+$confirmManualButton = Add-ActionButton -Text 'Confirm Step Done' -X 14 -Y 184
 $advancedXiloaderButton = Add-ActionButton -Text 'Support: xiloader' -X 354 -Y 104
 $advancedXiloaderButton.Visible = $false
 
@@ -1697,6 +2056,7 @@ $script:ActionButtonMap = @{
     installAshitaBootloader = $installAshitaBootloaderButton
     updateAshitaCommand = $updateAshitaCommandButton
     updateWindowerArgs = $updateWindowerArgsButton
+    confirmManual = $confirmManualButton
     advancedXiloader = $advancedXiloaderButton
 }
 
@@ -1732,24 +2092,24 @@ $stepImageBox.Add_Click({
 # Wizard navigation buttons.
 $backButton = New-Object System.Windows.Forms.Button
 $backButton.Text = 'Back'
-$backButton.Location = New-Object System.Drawing.Point(820, 790)
+$backButton.Location = New-Object System.Drawing.Point(452, 184)
 $backButton.Size = New-Object System.Drawing.Size(80, 28)
-$form.Controls.Add($backButton)
+$actionsGroup.Controls.Add($backButton)
 
 $nextButton = New-Object System.Windows.Forms.Button
 $nextButton.Text = 'Next Step ->'
-$nextButton.Location = New-Object System.Drawing.Point(890, 790)
-$nextButton.Size = New-Object System.Drawing.Size(110, 28)
-$form.Controls.Add($nextButton)
+$nextButton.Location = New-Object System.Drawing.Point(544, 184)
+$nextButton.Size = New-Object System.Drawing.Size(130, 28)
+$actionsGroup.Controls.Add($nextButton)
 
 # UI event wiring. Each handler validates inputs before launching helpers and
 # reports results back through the status box/message dialogs.
 $newButton.Add_Click({ Set-Mode 'New Installation' })
 $existingButton.Add_Click({ Set-Mode 'Existing Installation' })
 $repairButton.Add_Click({ Set-Mode 'Repair / Update Existing Installation' })
-$stepsList.Add_SelectedIndexChanged({ Update-StepView })
-$backButton.Add_Click({ if ($stepsList.SelectedIndex -gt 0) { $stepsList.SelectedIndex-- } })
-$nextButton.Add_Click({ if ($stepsList.SelectedIndex -lt ($stepsList.Items.Count - 1)) { $stepsList.SelectedIndex++ } })
+$stepsList.Add_SelectedIndexChanged({ Handle-StepSelectionChanged })
+$backButton.Add_Click({ if ($stepsList.SelectedIndex -gt 0) { Select-StepIndex -Index ($stepsList.SelectedIndex - 1) } })
+$nextButton.Add_Click({ Move-ToNextStep })
 $windowerRadio.Add_CheckedChanged({
     if ($windowerRadio.Checked) {
         Save-Settings
@@ -1766,11 +2126,17 @@ $ashitaRadio.Add_CheckedChanged({
 $officialButton.Add_Click({
     try {
         Start-Process $script:OfficialFfxiInstallUrl
-        $resultBox.Text = "Official Square Enix download page opened:`r`n$script:OfficialFfxiInstallUrl`r`n`r`nManual step: download and install PlayOnline Viewer and FINAL FANTASY XI, then return to this assistant."
+        $resultBox.Text = "Official Square Enix download page opened:`r`n$script:OfficialFfxiInstallUrl`r`n`r`nDownload the FFXI installer files from the official page. When you are done, return here and click Confirm Step Done."
     }
     catch {
         Show-Error "Could not open the official FFXI download page. Open this link manually:`r`n$script:OfficialFfxiInstallUrl`r`n`r`n$($_.Exception.Message)"
     }
+})
+$confirmManualButton.Add_Click({
+    try {
+        Complete-CurrentManualStep
+    }
+    catch { Show-Error $_.Exception.Message }
 })
 $windowerWebsiteButton.Add_Click({
     try {
@@ -1794,7 +2160,13 @@ $ashitaWebsiteButton.Add_Click({
         Show-Error "Could not open the Ashita website. Open this link manually:`r`n$script:AshitaUrl`r`n`r`n$($_.Exception.Message)"
     }
 })
-$detectButton.Add_Click({ try { Detect-Paths } catch { Show-Error $_.Exception.Message } })
+$detectButton.Add_Click({
+    try {
+        Detect-Paths
+        Mark-CurrentStepCompleteIfPassed
+    }
+    catch { Show-Error $_.Exception.Message }
+})
 $polButton.Add_Click({
     try {
         $polFolder = Ensure-PlayOnlineFolder
@@ -1828,6 +2200,7 @@ $openWindowerButton.Add_Click({
         Save-Settings
         $windowerFolder = Split-Path -Parent $windowerExeBox.Text
         Start-Process -FilePath $windowerExeBox.Text -WorkingDirectory $windowerFolder | Out-Null
+        Mark-CurrentStepCompleteIfPassed
         $resultBox.Text = "Windower opened:`r`n$($windowerExeBox.Text)`r`n`r`nManual step: create or edit the Supernova profile in Windower."
     }
     catch { Show-Error $_.Exception.Message }
@@ -1843,6 +2216,7 @@ $repairPrepButton.Add_Click({
             FfxiFolder = $ffxiFolder
             PlayOnlineFolder = $polFolder
         } | Out-Null
+        Mark-StepComplete -Step (Get-CurrentStep)
         Start-Process -FilePath (Join-Path $polFolder 'pol.exe') -WorkingDirectory $polFolder | Out-Null
         $resultBox.Text = "Repair prep complete.`r`n`r`nIn PlayOnline Viewer:`r`n1. Choose Check Files.`r`n2. Select FINAL FANTASY XI.`r`n3. Run File Repair.`r`n4. Close PlayOnline when complete.`r`n5. Click Install Patch Files, then Install Supernova DATs here to reapply Supernova files."
     }
@@ -1854,6 +2228,7 @@ $installXiloaderButton.Add_Click({
         $polFolder = Ensure-PlayOnlineFolder
         Save-Settings
         Invoke-Helper -ScriptName 'InstallXiloader.ps1' -FriendlyName 'xiloader install' -ElevationPath $polFolder -Arguments @{ PlayOnlineFolder = $polFolder } | Out-Null
+        Mark-CurrentStepCompleteIfPassed
         [void](Show-Validation)
         Show-Info 'xiloader install/verify finished. xiloader.exe should now be beside pol.exe. Click Next Step to continue.'
     }
@@ -1869,6 +2244,7 @@ $installPatchButton.Add_Click({
             FfxiFolder = $ffxiFolder
             InstallSelection = 'RootPatch'
         } | Out-Null
+        Mark-CurrentStepCompleteIfPassed
         [void](Show-Validation)
         Show-Info 'Supernova patch file step finished. Click Next Step to continue.'
     }
@@ -1884,6 +2260,7 @@ $installDatsButton.Add_Click({
             FfxiFolder = $ffxiFolder
             InstallSelection = 'CustomDats'
         } | Out-Null
+        Mark-CurrentStepCompleteIfPassed
         [void](Show-Validation)
         Show-Info 'Supernova DAT step finished. Click Next Step to continue.'
     }
@@ -1908,6 +2285,7 @@ $installMsvcButton.Add_Click({
     try {
         $status = Get-Msvc2015RuntimeX86Status
         if ($status.Installed) {
+            Mark-CurrentStepCompleteIfPassed
             [void](Show-Validation)
             Show-Info "Microsoft Visual C++ 2015 x86 runtime is already installed.`r`nVersion: $($status.Version)`r`nSource: $($status.Source)"
             return
@@ -1916,6 +2294,7 @@ $installMsvcButton.Add_Click({
         if (-not (Confirm-Action "This will download and install Microsoft Visual C++ Redistributable 2015 x86 from Microsoft:`r`n$script:Msvc2015RuntimeUrl`r`n`r`nWindows will ask for administrator approval because this installs a system runtime. It does not change your FFXI or PlayOnline files. Continue?")) { return }
         Save-Settings
         Invoke-Helper -ScriptName 'InstallMsvc2015Runtime.ps1' -FriendlyName 'Microsoft Visual C++ 2015 x86 runtime install' -ForceElevation -ElevationReason 'install a Microsoft runtime into Windows' -Arguments @{} | Out-Null
+        Mark-CurrentStepCompleteIfPassed
         [void](Show-Validation)
         Show-Info 'Microsoft Visual C++ 2015 x86 runtime install/verify finished. Click Next Step to continue.'
     }
@@ -1930,6 +2309,7 @@ $installAshitaBootloaderButton.Add_Click({
         Invoke-Helper -ScriptName 'InstallAshitaBootloader.ps1' -FriendlyName 'Ashita xiloader bootloader install' -ElevationPath $ashitaFolderBox.Text -Arguments @{
             AshitaFolder = $ashitaFolderBox.Text
         } | Out-Null
+        Mark-CurrentStepCompleteIfPassed
         [void](Show-Validation)
         Show-Info 'Ashita xiloader bootloader install/verify finished. Click Next Step to continue.'
     }
@@ -1951,6 +2331,7 @@ $configureWindowerButton.Add_Click({
             XiloaderArgs = "--server $script:ServerHost"
         } | Out-Null
         $windowerRadio.Checked = $true
+        Mark-CurrentStepCompleteIfPassed
         [void](Show-Validation)
         Show-Info 'Windower configuration finished. Click Validate Setup and make sure every item says PASS.'
     }
@@ -1976,6 +2357,7 @@ $updateWindowerArgsButton.Add_Click({
             ProfileName = $windowerProfileBox.Text
             XiloaderArgs = $args
         } | Out-Null
+        Mark-CurrentStepCompleteIfPassed
         [void](Show-Validation)
         Show-Info 'Windower args updated. Click Validate Setup and make sure every item says PASS.'
     }
@@ -1992,6 +2374,7 @@ $configureAshitaButton.Add_Click({
             ConfigName = 'supernova.ini'
             XiloaderArgs = "--server $script:ServerHost"
         } | Out-Null
+        Mark-CurrentStepCompleteIfPassed
         [void](Show-Validation)
         Show-Info 'Ashita configuration finished. Click Validate Setup and make sure every item says PASS.'
     }
@@ -2011,6 +2394,7 @@ $updateAshitaCommandButton.Add_Click({
             ConfigName = 'supernova.ini'
             XiloaderArgs = $command
         } | Out-Null
+        Mark-CurrentStepCompleteIfPassed
         [void](Show-Validation)
         Show-Info 'Ashita command updated. Click Validate Setup and make sure every item says PASS.'
     }
@@ -2022,6 +2406,7 @@ $validateButton.Add_Click({
         Save-Settings
         $complete = Show-Validation
         if ($complete) {
+            Mark-StepComplete -Step (Get-CurrentStep)
             Show-Info 'Validation passed. Setup is ready. Start the game through the configured Windower or Ashita profile.'
         }
         else {
