@@ -63,7 +63,8 @@ $ErrorActionPreference = 'Stop'
 $script:AppName = 'Supernova Setup Assistant'
 $script:ServerHost = 'login.supernovaffxi.com'
 $script:OfficialFfxiInstallUrl = 'https://www.playonline.com/ff11us/download/media/install_win.html'
-$script:Msvc2015RuntimeUrl = 'https://www.microsoft.com/en-ca/download/details.aspx?id=48145'
+$script:Msvc2015RuntimeUrl = 'https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist'
+$script:MinimumMsvc14X86Version = [version]'14.40.0.0'
 $script:WindowerUrl = 'https://www.windower.net/'
 $script:AshitaUrl = 'https://www.ashitaxi.com/'
 $script:SettingsDir = Join-Path $env:LOCALAPPDATA 'SupernovaSetupAssistant'
@@ -87,11 +88,88 @@ function New-DirectoryIfMissing {
     }
 }
 
+function Add-SharedLogLine {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Line
+    )
+
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        $stream = $null
+        $writer = $null
+        try {
+            $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+            $writer = New-Object System.IO.StreamWriter -ArgumentList $stream, ([System.Text.Encoding]::UTF8)
+            $writer.WriteLine($Line)
+            return $true
+        }
+        catch {
+            $lastError = $_
+            if ($attempt -lt 5) {
+                Start-Sleep -Milliseconds (50 * $attempt)
+            }
+        }
+        finally {
+            if ($writer) {
+                $writer.Dispose()
+            }
+            elseif ($stream) {
+                $stream.Dispose()
+            }
+        }
+    }
+
+    try {
+        $message = if ($lastError) { $lastError.Exception.Message } else { 'unknown error' }
+        Write-Host "Could not write log '$Path': $message"
+    }
+    catch {
+    }
+    return $false
+}
+
+function Read-SharedLogLines {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return @()
+    }
+
+    $stream = $null
+    $reader = $null
+    try {
+        $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        $reader = New-Object System.IO.StreamReader -ArgumentList $stream, ([System.Text.Encoding]::UTF8), $true
+        $content = $reader.ReadToEnd()
+        if ([string]::IsNullOrEmpty($content)) {
+            return @()
+        }
+
+        $lines = @($content -split "\r?\n")
+        if ($lines.Count -gt 0 -and $lines[$lines.Count - 1] -eq '') {
+            if ($lines.Count -eq 1) {
+                return @()
+            }
+            return @($lines[0..($lines.Count - 2)])
+        }
+        return $lines
+    }
+    finally {
+        if ($reader) {
+            $reader.Dispose()
+        }
+        elseif ($stream) {
+            $stream.Dispose()
+        }
+    }
+}
+
 function Write-AssistantLog {
     param([Parameter(Mandatory)][string]$Message)
     New-DirectoryIfMissing -Path $script:SettingsDir
     $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    Add-Content -LiteralPath $script:LogPath -Value "[$stamp] $Message"
+    [void](Add-SharedLogLine -Path $script:LogPath -Line "[$stamp] $Message")
 }
 
 function Show-Info {
@@ -388,8 +466,8 @@ function Test-GameInstallFolderLooksValid {
         return $false
     }
 
-    $pol = Join-Path $Path 'PlayOnlineViewer'
-    $ffxi = Join-Path $Path 'FINAL FANTASY XI'
+    $pol = Get-ResolvedPlayOnlineFolder -Path $Path
+    $ffxi = Get-ResolvedFfxiFolder -Path $Path
     return (
         (Test-PlayOnlineFolderLooksValid -Path $pol) -and
         (Test-FfxiFolderLooksValid -Path $ffxi)
@@ -407,12 +485,13 @@ function Test-InstallFoldersLookValid {
 }
 
 function Get-InstallFoldersHelpMessage {
-    $parentPol = Join-CandidatePath $gameRootBox.Text 'PlayOnlineViewer\pol.exe'
-    $parentFfxi = Join-CandidatePath $gameRootBox.Text 'FINAL FANTASY XI'
+    $parentPolFolder = Get-ResolvedPlayOnlineFolder -Path $gameRootBox.Text
+    $parentFfxi = Get-ResolvedFfxiFolder -Path $gameRootBox.Text
+    $parentPol = Join-CandidatePath $parentPolFolder 'pol.exe'
     $checks = @(
         [pscustomobject]@{ Label = 'Game install folder exists'; Passed = (Test-ExistingPath -Path $gameRootBox.Text -PathType Container); Path = $gameRootBox.Text },
-        [pscustomobject]@{ Label = 'Parent contains PlayOnlineViewer\pol.exe'; Passed = (Test-ExistingPath -Path $parentPol -PathType Leaf); Path = $parentPol },
-        [pscustomobject]@{ Label = 'Parent contains FINAL FANTASY XI folder'; Passed = (Test-ExistingPath -Path $parentFfxi -PathType Container); Path = $parentFfxi },
+        [pscustomobject]@{ Label = 'Game install folder resolves to PlayOnlineViewer\pol.exe'; Passed = (Test-ExistingPath -Path $parentPol -PathType Leaf); Path = $parentPol },
+        [pscustomobject]@{ Label = 'Game install folder resolves to FINAL FANTASY XI folder'; Passed = (Test-FfxiFolderLooksValid -Path $parentFfxi); Path = $parentFfxi },
         [pscustomobject]@{ Label = 'PlayOnlineViewer row points to pol.exe'; Passed = (Test-PlayOnlineFolderLooksValid -Path $polBox.Text); Path = (Join-CandidatePath $polBox.Text 'pol.exe') },
         [pscustomobject]@{ Label = 'FINAL FANTASY XI row contains ROM, ROM3, ROM4, and sound4'; Passed = (Test-FfxiFolderLooksValid -Path $ffxiBox.Text); Path = $ffxiBox.Text }
     )
@@ -420,7 +499,7 @@ function Get-InstallFoldersHelpMessage {
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('Step 2 needs your installed game folders.') | Out-Null
     $lines.Add('') | Out-Null
-    $lines.Add('Choose the parent folder that contains both folders side by side, usually one of these:') | Out-Null
+    $lines.Add('Choose the parent folder that contains the game install, usually one of these:') | Out-Null
     $lines.Add('C:\SquareEnix') | Out-Null
     $lines.Add('C:\Program Files (x86)\PlayOnline\SquareEnix') | Out-Null
     $lines.Add('') | Out-Null
@@ -467,7 +546,16 @@ function Get-ResolvedGameInstallFolder {
         $parent = Split-Path -Parent $Path -ErrorAction SilentlyContinue
         if (-not [string]::IsNullOrWhiteSpace($parent)) {
             $candidates += $parent
+            $grandParent = Split-Path -Parent $parent -ErrorAction SilentlyContinue
+            if (-not [string]::IsNullOrWhiteSpace($grandParent)) {
+                $candidates += $grandParent
+            }
         }
+    }
+
+    $parentOfPath = Split-Path -Parent $Path -ErrorAction SilentlyContinue
+    if (-not [string]::IsNullOrWhiteSpace($parentOfPath)) {
+        $candidates += $parentOfPath
     }
 
     foreach ($candidate in $candidates) {
@@ -482,9 +570,11 @@ function Apply-GameInstallFolder {
     param([string]$Path)
     $resolved = Get-ResolvedGameInstallFolder -Path $Path
     if (-not [string]::IsNullOrWhiteSpace($resolved)) {
+        $pol = Get-ResolvedPlayOnlineFolder -Path $resolved
+        $ffxi = Get-ResolvedFfxiFolder -Path $resolved
         $gameRootBox.Text = $resolved
-        $polBox.Text = Join-Path $resolved 'PlayOnlineViewer'
-        $ffxiBox.Text = Join-Path $resolved 'FINAL FANTASY XI'
+        $polBox.Text = $pol
+        $ffxiBox.Text = $ffxi
         $resultBox.Text = "Game install folder selected:`r`n$resolved`r`n`r`nPlayOnlineViewer and FINAL FANTASY XI paths were filled in from that folder."
     }
 }
@@ -593,11 +683,41 @@ function Test-RunAsAdminCompatibilityFlag {
 
 # Runtime detection helpers. The assistant validates the x86 VC++ runtime before
 # saying setup is complete.
+function ConvertTo-VersionOrNull {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $null
+    }
+
+    $clean = $Value.Trim().TrimStart('v', 'V')
+    try {
+        return [version]$clean
+    }
+    catch {
+        return $null
+    }
+}
+
+function Get-FileVersionOrNull {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $null
+    }
+
+    return ConvertTo-VersionOrNull -Value (Get-Item -LiteralPath $Path).VersionInfo.FileVersion
+}
+
 function Get-Msvc2015RuntimeX86Status {
     $runtimeRegistryPaths = @(
         'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x86',
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x86'
     )
+
+    $installed = $false
+    $version = 'missing'
+    $source = ''
 
     foreach ($path in $runtimeRegistryPaths) {
         try {
@@ -612,11 +732,12 @@ function Get-Msvc2015RuntimeX86Status {
             }
 
             if ($installedValue -eq 1) {
-                $version = 'unknown'
+                $installed = $true
                 if (($props.PSObject.Properties.Name -contains 'Version') -and -not [string]::IsNullOrWhiteSpace([string]$props.Version)) {
                     $version = [string]$props.Version
                 }
-                return [pscustomobject]@{ Installed = $true; Version = $version; Source = $path }
+                $source = $path
+                break
             }
         }
         catch {
@@ -624,34 +745,61 @@ function Get-Msvc2015RuntimeX86Status {
         }
     }
 
-    $bundleRegistryPaths = @(
-        'HKLM:\SOFTWARE\Classes\Installer\Dependencies\,,x86,14.0,bundle',
-        'HKLM:\SOFTWARE\WOW6432Node\Classes\Installer\Dependencies\,,x86,14.0,bundle'
-    )
+    if (-not $installed) {
+        $bundleRegistryPaths = @(
+            'HKLM:\SOFTWARE\Classes\Installer\Dependencies\,,x86,14.0,bundle',
+            'HKLM:\SOFTWARE\WOW6432Node\Classes\Installer\Dependencies\,,x86,14.0,bundle'
+        )
 
-    foreach ($path in $bundleRegistryPaths) {
-        try {
-            if (-not (Test-Path -LiteralPath $path)) {
-                continue
-            }
+        foreach ($path in $bundleRegistryPaths) {
+            try {
+                if (-not (Test-Path -LiteralPath $path)) {
+                    continue
+                }
 
-            $props = Get-ItemProperty -LiteralPath $path
-            $version = 'unknown'
-            if (($props.PSObject.Properties.Name -contains 'Version') -and -not [string]::IsNullOrWhiteSpace([string]$props.Version)) {
-                $version = [string]$props.Version
+                $props = Get-ItemProperty -LiteralPath $path
+                $installed = $true
+                $source = $path
+                $version = 'unknown'
+                if (($props.PSObject.Properties.Name -contains 'Version') -and -not [string]::IsNullOrWhiteSpace([string]$props.Version)) {
+                    $version = [string]$props.Version
+                }
+                break
             }
-            return [pscustomobject]@{ Installed = $true; Version = $version; Source = $path }
-        }
-        catch {
-            Write-AssistantLog "MSVC runtime bundle registry check failed for ${path}: $($_.Exception.Message)"
+            catch {
+                Write-AssistantLog "MSVC runtime bundle registry check failed for ${path}: $($_.Exception.Message)"
+            }
         }
     }
 
-    return [pscustomobject]@{ Installed = $false; Version = 'missing'; Source = '' }
+    $msvcp140Path = Join-Path $env:WINDIR 'SysWOW64\MSVCP140.dll'
+    $vcruntime140Path = Join-Path $env:WINDIR 'SysWOW64\VCRUNTIME140.dll'
+    $fileVersion = Get-FileVersionOrNull -Path $msvcp140Path
+    $registryVersion = ConvertTo-VersionOrNull -Value $version
+    $effectiveVersion = if ($fileVersion) { $fileVersion } else { $registryVersion }
+    $hasRequiredFiles = (
+        (Test-Path -LiteralPath $msvcp140Path -PathType Leaf) -and
+        (Test-Path -LiteralPath $vcruntime140Path -PathType Leaf)
+    )
+    $meetsRequirement = (
+        $installed -and
+        $hasRequiredFiles -and
+        $effectiveVersion -ne $null -and
+        $effectiveVersion -ge $script:MinimumMsvc14X86Version
+    )
+
+    return [pscustomobject]@{
+        Installed = $installed
+        MeetsRequirement = $meetsRequirement
+        Version = $version
+        RuntimeFileVersion = if ($fileVersion) { $fileVersion.ToString() } else { 'missing' }
+        RequiredFilesPresent = $hasRequiredFiles
+        Source = $source
+    }
 }
 
 function Test-Msvc2015RuntimeX86Installed {
-    return (Get-Msvc2015RuntimeX86Status).Installed
+    return (Get-Msvc2015RuntimeX86Status).MeetsRequirement
 }
 
 # Launcher input validation. These checks catch common support mistakes before a
@@ -732,7 +880,7 @@ function Invoke-HelperWithProgressDialog {
     $initialLogLineCount = 0
     if (Test-Path -LiteralPath $LogHint -PathType Leaf) {
         try {
-            $initialLogLineCount = @((Get-Content -LiteralPath $LogHint -ErrorAction Stop)).Count
+            $initialLogLineCount = @(Read-SharedLogLines -Path $LogHint).Count
         }
         catch {
             Write-AssistantLog "Could not read initial helper log length for '$LogHint': $($_.Exception.Message)"
@@ -787,7 +935,7 @@ function Invoke-HelperWithProgressDialog {
         }
 
         try {
-            $allLines = @((Get-Content -LiteralPath $LogHint -ErrorAction Stop))
+            $allLines = @(Read-SharedLogLines -Path $LogHint)
             $newLines = @($allLines | Select-Object -Skip $initialLogLineCount)
             if ($newLines.Count -eq $state.LastDisplayedLineCount) {
                 return
@@ -1293,22 +1441,74 @@ function Test-WindowerAccountArgsConfigured {
     return $false
 }
 
+function Test-WindowerProfileNameMatches {
+    param(
+        [Parameter(Mandatory = $true)]$Profile,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    $target = $Name.Trim()
+    if ($Profile.Attributes -and $Profile.Attributes['name']) {
+        $attributeName = $Profile.Attributes['name'].Value
+        if (-not [string]::IsNullOrWhiteSpace($attributeName) -and [string]::Equals($attributeName.Trim(), $target, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    $nameNode = $Profile.SelectSingleNode("*[local-name()='name']")
+    if ($nameNode -and -not [string]::IsNullOrWhiteSpace($nameNode.InnerText) -and [string]::Equals($nameNode.InnerText.Trim(), $target, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+
+    return $false
+}
+
+function Test-WindowerProfileIsUnnamed {
+    param([Parameter(Mandatory = $true)]$Profile)
+
+    if ($Profile.Attributes -and $Profile.Attributes['name'] -and -not [string]::IsNullOrWhiteSpace($Profile.Attributes['name'].Value)) {
+        return $false
+    }
+
+    $nameNode = $Profile.SelectSingleNode("*[local-name()='name']")
+    if ($nameNode -and -not [string]::IsNullOrWhiteSpace($nameNode.InnerText)) {
+        return $false
+    }
+
+    return $true
+}
+
+function Find-WindowerProfileNode {
+    param(
+        [Parameter(Mandatory = $true)][xml]$Document,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [switch]$AllowSingleUnnamed
+    )
+
+    $profiles = @($Document.SelectNodes("//*[local-name()='profile']"))
+    foreach ($profile in $profiles) {
+        if (Test-WindowerProfileNameMatches -Profile $profile -Name $Name) {
+            return $profile
+        }
+    }
+
+    if ($AllowSingleUnnamed) {
+        $unnamedProfiles = @($profiles | Where-Object { Test-WindowerProfileIsUnnamed -Profile $_ })
+        if ($unnamedProfiles.Count -eq 1) {
+            return $unnamedProfiles[0]
+        }
+    }
+
+    return $null
+}
+
 function Test-WindowerProfileExists {
     if (-not (Test-Path -LiteralPath $windowerSettingsBox.Text -PathType Leaf)) {
         return $false
     }
     try {
         [xml]$doc = Get-Content -LiteralPath $windowerSettingsBox.Text -Raw
-        $profiles = $doc.SelectNodes("//*[local-name()='profile']")
-        foreach ($profile in $profiles) {
-            if ($profile.Attributes -and $profile.Attributes['name'] -and $profile.Attributes['name'].Value -eq $windowerProfileBox.Text) {
-                return $true
-            }
-            $nameNode = $profile.SelectSingleNode("*[local-name()='name']")
-            if ($nameNode -and $nameNode.InnerText -eq $windowerProfileBox.Text) {
-                return $true
-            }
-        }
+        return $null -ne (Find-WindowerProfileNode -Document $doc -Name $windowerProfileBox.Text -AllowSingleUnnamed)
     }
     catch {
         Write-AssistantLog "Windower profile lookup failed: $($_.Exception.Message)"
@@ -1380,7 +1580,7 @@ function New-ValidationResult {
 # files and selected launcher configuration pass these tests.
 function Get-ValidationResults {
     $results = @()
-    $results += New-ValidationResult -Name 'Game install folder contains PlayOnlineViewer and FINAL FANTASY XI' -Passed (Test-GameInstallFolderLooksValid -Path $gameRootBox.Text)
+    $results += New-ValidationResult -Name 'Game install folders are selected and valid' -Passed (Test-InstallFoldersLookValid)
     $results += New-ValidationResult -Name 'Microsoft Visual C++ 2015 x86 runtime is installed' -Passed (Test-Msvc2015RuntimeX86Installed)
     $results += New-ValidationResult -Name 'PlayOnlineViewer folder is selected and contains pol.exe' -Passed (Test-PlayOnlineFolderLooksValid -Path $polBox.Text)
     $results += New-ValidationResult -Name 'xiloader.exe exists beside pol.exe' -Passed (Test-ExistingPath -Path (Join-CandidatePath $polBox.Text 'xiloader.exe') -PathType Leaf)
@@ -2705,19 +2905,19 @@ $deleteVulgarButton.Add_Click({
 $installMsvcButton.Add_Click({
     try {
         $status = Get-Msvc2015RuntimeX86Status
-        if ($status.Installed) {
+        if ($status.MeetsRequirement) {
             Mark-CurrentStepCompleteIfPassed
             [void](Show-Validation)
-            Show-Info "Microsoft Visual C++ 2015 x86 runtime is already installed.`r`nVersion: $($status.Version)`r`nSource: $($status.Source)"
+            Show-Info "Microsoft Visual C++ 2015-2022 x86 runtime is already current.`r`nVersion: $($status.Version)`r`nRuntime file version: $($status.RuntimeFileVersion)`r`nSource: $($status.Source)"
             return
         }
 
-        if (-not (Confirm-Action "This will download and install Microsoft Visual C++ Redistributable 2015 x86 from Microsoft:`r`n$script:Msvc2015RuntimeUrl`r`n`r`nWindows will ask for administrator approval because this installs a system runtime. It does not change your FFXI or PlayOnline files. Continue?")) { return }
+        if (-not (Confirm-Action "This will download and install/update Microsoft Visual C++ Redistributable 2015-2022 x86 from Microsoft:`r`n$script:Msvc2015RuntimeUrl`r`n`r`nWindows will ask for administrator approval because this installs a system runtime. It does not change your FFXI or PlayOnline files. Continue?")) { return }
         Save-Settings
-        Invoke-Helper -ScriptName 'InstallMsvc2015Runtime.ps1' -FriendlyName 'Microsoft Visual C++ 2015 x86 runtime install' -ForceElevation -ElevationReason 'install a Microsoft runtime into Windows' -Arguments @{} | Out-Null
+        Invoke-Helper -ScriptName 'InstallMsvc2015Runtime.ps1' -FriendlyName 'Microsoft Visual C++ 2015-2022 x86 runtime install' -ForceElevation -ElevationReason 'install a Microsoft runtime into Windows' -Arguments @{} | Out-Null
         Mark-CurrentStepCompleteIfPassed
         [void](Show-Validation)
-        Show-Info 'Microsoft Visual C++ 2015 x86 runtime install/verify finished. Click Next Step to continue.'
+        Show-Info 'Microsoft Visual C++ 2015-2022 x86 runtime install/verify finished. Click Next Step to continue.'
     }
     catch { Show-Error $_.Exception.Message }
 })

@@ -31,12 +31,53 @@ function New-DirectoryIfMissing {
     }
 }
 
+function Add-SharedLogLine {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Line
+    )
+
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        $stream = $null
+        $writer = $null
+        try {
+            $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+            $writer = New-Object System.IO.StreamWriter -ArgumentList $stream, ([System.Text.Encoding]::UTF8)
+            $writer.WriteLine($Line)
+            return $true
+        }
+        catch {
+            $lastError = $_
+            if ($attempt -lt 5) {
+                Start-Sleep -Milliseconds (50 * $attempt)
+            }
+        }
+        finally {
+            if ($writer) {
+                $writer.Dispose()
+            }
+            elseif ($stream) {
+                $stream.Dispose()
+            }
+        }
+    }
+
+    try {
+        $message = if ($lastError) { $lastError.Exception.Message } else { 'unknown error' }
+        Write-Host "Could not write log '$Path': $message"
+    }
+    catch {
+    }
+    return $false
+}
+
 # Writes progress to both the installer console and a persistent log file.
 function Write-XiloaderLog {
     param([Parameter(Mandatory = $true)][string]$Message)
     New-DirectoryIfMissing -Path $appData
     $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    Add-Content -LiteralPath $logPath -Value "[$stamp] $Message"
+    [void](Add-SharedLogLine -Path $logPath -Line "[$stamp] $Message")
     Write-Host $Message
 }
 

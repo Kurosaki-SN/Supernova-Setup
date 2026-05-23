@@ -49,13 +49,54 @@ function New-DirectoryIfMissing {
     }
 }
 
+function Add-SharedLogLine {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Line
+    )
+
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        $stream = $null
+        $writer = $null
+        try {
+            $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+            $writer = New-Object System.IO.StreamWriter -ArgumentList $stream, ([System.Text.Encoding]::UTF8)
+            $writer.WriteLine($Line)
+            return $true
+        }
+        catch {
+            $lastError = $_
+            if ($attempt -lt 5) {
+                Start-Sleep -Milliseconds (50 * $attempt)
+            }
+        }
+        finally {
+            if ($writer) {
+                $writer.Dispose()
+            }
+            elseif ($stream) {
+                $stream.Dispose()
+            }
+        }
+    }
+
+    try {
+        $message = if ($lastError) { $lastError.Exception.Message } else { 'unknown error' }
+        Write-Host "Could not write log '$Path': $message"
+    }
+    catch {
+    }
+    return $false
+}
+
 # Writes progress to both the installer console and a persistent log file.
 # The log is useful if a player reports that patching failed on their machine.
 function Write-PatchLog {
     param([Parameter(Mandatory = $true)][string]$Message)
     New-DirectoryIfMissing -Path $appData
     $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    Add-Content -LiteralPath $logPath -Value "[$stamp] $Message"
+    [void](Add-SharedLogLine -Path $logPath -Line "[$stamp] $Message")
     try {
         Write-Host $Message
     }
@@ -89,6 +130,48 @@ function Test-SafeExtractedFile {
     $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\') + '\'
     $fileFull = [System.IO.Path]::GetFullPath($FilePath)
     return $fileFull.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Expand-ZipArchiveSafely {
+    param(
+        [Parameter(Mandatory = $true)][string]$ZipPath,
+        [Parameter(Mandatory = $true)][string]$DestinationPath
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    $destinationFull = [System.IO.Path]::GetFullPath($DestinationPath).TrimEnd('\') + '\'
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    $extractedCount = 0
+    try {
+        foreach ($entry in $archive.Entries) {
+            $relative = $entry.FullName.Replace('/', '\').TrimStart('\')
+            if ([string]::IsNullOrWhiteSpace($relative)) {
+                continue
+            }
+
+            $target = Join-Path $DestinationPath $relative
+            $targetFull = [System.IO.Path]::GetFullPath($target)
+            if (-not $targetFull.StartsWith($destinationFull, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Unsafe file path in zip entry: $($entry.FullName)"
+            }
+
+            if ([string]::IsNullOrEmpty($entry.Name)) {
+                New-DirectoryIfMissing -Path $targetFull
+                continue
+            }
+
+            $targetDirectory = Split-Path -Parent $targetFull
+            New-DirectoryIfMissing -Path $targetDirectory
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $targetFull, $true)
+            $extractedCount++
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+
+    return $extractedCount
 }
 
 # Converts a custom DAT archive path into the matching path under the FFXI
@@ -226,7 +309,8 @@ function Install-SupernovaArchive {
         # Expand the archive, then collect the extracted files. An empty archive
         # is treated as an error because there is nothing useful to install.
         Write-PatchLog "Extracting $ArchiveLabel archive"
-        Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force
+        $extractedEntryCount = Expand-ZipArchiveSafely -ZipPath $zipPath -DestinationPath $extractPath
+        Write-PatchLog "Extracted $extractedEntryCount file(s) from $ArchiveLabel archive"
 
         $files = @(Get-ChildItem -LiteralPath $extractPath -File -Recurse)
         if ($files.Count -eq 0) {

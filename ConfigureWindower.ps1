@@ -27,32 +27,132 @@ function New-DirectoryIfMissing {
     }
 }
 
+function Add-SharedLogLine {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Line
+    )
+
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        $stream = $null
+        $writer = $null
+        try {
+            $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+            $writer = New-Object System.IO.StreamWriter -ArgumentList $stream, ([System.Text.Encoding]::UTF8)
+            $writer.WriteLine($Line)
+            return $true
+        }
+        catch {
+            $lastError = $_
+            if ($attempt -lt 5) {
+                Start-Sleep -Milliseconds (50 * $attempt)
+            }
+        }
+        finally {
+            if ($writer) {
+                $writer.Dispose()
+            }
+            elseif ($stream) {
+                $stream.Dispose()
+            }
+        }
+    }
+
+    try {
+        $message = if ($lastError) { $lastError.Exception.Message } else { 'unknown error' }
+        Write-Host "Could not write log '$Path': $message"
+    }
+    catch {
+    }
+    return $false
+}
+
 # Writes progress to both the console and a persistent log file.
 function Write-SetupLog {
     param([Parameter(Mandatory = $true)][string]$Message)
     New-DirectoryIfMissing -Path $appData
     $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    Add-Content -LiteralPath $logPath -Value "[$stamp] $Message"
+    [void](Add-SharedLogLine -Path $logPath -Line "[$stamp] $Message")
     Write-Host $Message
 }
 
-# Windower profiles have appeared with the name either as an attribute or as a
-# child element, so this supports both forms.
-function Find-WindowerProfileNode {
+function Test-WindowerProfileNameMatches {
     param(
-        [Parameter(Mandatory = $true)][xml]$Document,
+        [Parameter(Mandatory = $true)]$Profile,
         [Parameter(Mandatory = $true)][string]$Name
     )
 
-    $profiles = $Document.SelectNodes("//*[local-name()='profile']")
+    $target = $Name.Trim()
+    if ($Profile.Attributes -and $Profile.Attributes['name']) {
+        $attributeName = $Profile.Attributes['name'].Value
+        if (-not [string]::IsNullOrWhiteSpace($attributeName) -and [string]::Equals($attributeName.Trim(), $target, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    $nameNode = $Profile.SelectSingleNode("*[local-name()='name']")
+    if ($nameNode -and -not [string]::IsNullOrWhiteSpace($nameNode.InnerText) -and [string]::Equals($nameNode.InnerText.Trim(), $target, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+
+    return $false
+}
+
+function Test-WindowerProfileIsUnnamed {
+    param([Parameter(Mandatory = $true)]$Profile)
+
+    if ($Profile.Attributes -and $Profile.Attributes['name'] -and -not [string]::IsNullOrWhiteSpace($Profile.Attributes['name'].Value)) {
+        return $false
+    }
+
+    $nameNode = $Profile.SelectSingleNode("*[local-name()='name']")
+    if ($nameNode -and -not [string]::IsNullOrWhiteSpace($nameNode.InnerText)) {
+        return $false
+    }
+
+    return $true
+}
+
+function Set-WindowerProfileName {
+    param(
+        [Parameter(Mandatory = $true)][xml]$Document,
+        [Parameter(Mandatory = $true)]$Profile,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    if (-not $Profile.Attributes['name']) {
+        $attribute = $Document.CreateAttribute('name')
+        $Profile.Attributes.Append($attribute) | Out-Null
+    }
+    $Profile.Attributes['name'].Value = $Name
+
+    $nameNode = $Profile.SelectSingleNode("*[local-name()='name']")
+    if ($nameNode) {
+        $nameNode.InnerText = $Name
+    }
+}
+
+# Windower profiles have appeared with the name either as an attribute or as a
+# child element. Fresh Windower installs can also keep the first profile unnamed.
+function Find-WindowerProfileNode {
+    param(
+        [Parameter(Mandatory = $true)][xml]$Document,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [switch]$AllowSingleUnnamed
+    )
+
+    $profiles = @($Document.SelectNodes("//*[local-name()='profile']"))
     foreach ($profile in $profiles) {
-        if ($profile.Attributes -and $profile.Attributes['name'] -and $profile.Attributes['name'].Value -eq $Name) {
+        if (Test-WindowerProfileNameMatches -Profile $profile -Name $Name) {
             return $profile
         }
+    }
 
-        $nameNode = $profile.SelectSingleNode("*[local-name()='name']")
-        if ($nameNode -and $nameNode.InnerText -eq $Name) {
-            return $profile
+    if ($AllowSingleUnnamed) {
+        $unnamedProfiles = @($profiles | Where-Object { Test-WindowerProfileIsUnnamed -Profile $_ })
+        if ($unnamedProfiles.Count -eq 1) {
+            return $unnamedProfiles[0]
         }
     }
 
@@ -85,7 +185,7 @@ try {
     }
 
     [xml]$doc = Get-Content -LiteralPath $SettingsXmlPath -Raw
-    $profile = Find-WindowerProfileNode -Document $doc -Name $ProfileName
+    $profile = Find-WindowerProfileNode -Document $doc -Name $ProfileName -AllowSingleUnnamed
     if (-not $profile) {
         Write-SetupLog "Profile '$ProfileName' was not found in settings.xml."
         Write-SetupLog "Create a Windower profile named '$ProfileName', then run this step again."
@@ -95,6 +195,11 @@ try {
     $backup = "$SettingsXmlPath.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
     Copy-Item -LiteralPath $SettingsXmlPath -Destination $backup -Force
     Write-SetupLog "Backed up Windower settings to $backup"
+
+    if (Test-WindowerProfileIsUnnamed -Profile $profile) {
+        Set-WindowerProfileName -Document $doc -Profile $profile -Name $ProfileName
+        Write-SetupLog "Named the single unnamed Windower profile '$ProfileName'."
+    }
 
     Set-XmlChildText -Document $doc -Parent $profile -Name 'args' -Value $XiloaderArgs
     Set-XmlChildText -Document $doc -Parent $profile -Name 'executable' -Value 'xiloader.exe'
