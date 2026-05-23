@@ -368,6 +368,49 @@ function Test-GameInstallFolderLooksValid {
     )
 }
 
+function Test-InstallFoldersLookValid {
+    return (
+        (Test-GameInstallFolderLooksValid -Path $gameRootBox.Text) -or
+        (
+            (Test-PlayOnlineFolderLooksValid -Path $polBox.Text) -and
+            (Test-FfxiFolderLooksValid -Path $ffxiBox.Text)
+        )
+    )
+}
+
+function Get-InstallFoldersHelpMessage {
+    $parentPol = Join-CandidatePath $gameRootBox.Text 'PlayOnlineViewer\pol.exe'
+    $parentFfxi = Join-CandidatePath $gameRootBox.Text 'FINAL FANTASY XI'
+    $checks = @(
+        [pscustomobject]@{ Label = 'Game install folder exists'; Passed = (Test-ExistingPath -Path $gameRootBox.Text -PathType Container); Path = $gameRootBox.Text },
+        [pscustomobject]@{ Label = 'Parent contains PlayOnlineViewer\pol.exe'; Passed = (Test-ExistingPath -Path $parentPol -PathType Leaf); Path = $parentPol },
+        [pscustomobject]@{ Label = 'Parent contains FINAL FANTASY XI folder'; Passed = (Test-ExistingPath -Path $parentFfxi -PathType Container); Path = $parentFfxi },
+        [pscustomobject]@{ Label = 'PlayOnlineViewer row points to pol.exe'; Passed = (Test-PlayOnlineFolderLooksValid -Path $polBox.Text); Path = (Join-CandidatePath $polBox.Text 'pol.exe') },
+        [pscustomobject]@{ Label = 'FINAL FANTASY XI row contains ROM, ROM3, ROM4, and sound4'; Passed = (Test-FfxiFolderLooksValid -Path $ffxiBox.Text); Path = $ffxiBox.Text }
+    )
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('Step 2 needs your installed game folders.') | Out-Null
+    $lines.Add('') | Out-Null
+    $lines.Add('Choose the parent folder that contains both folders side by side, usually one of these:') | Out-Null
+    $lines.Add('C:\SquareEnix') | Out-Null
+    $lines.Add('C:\Program Files (x86)\PlayOnline\SquareEnix') | Out-Null
+    $lines.Add('') | Out-Null
+    $lines.Add('The helper also accepts the separate PlayOnlineViewer and FINAL FANTASY XI rows if both are valid.') | Out-Null
+    $lines.Add('') | Out-Null
+    $lines.Add('Current checks:') | Out-Null
+
+    foreach ($check in $checks) {
+        $status = if ($check.Passed) { 'PASS' } else { 'MISSING' }
+        $lines.Add(("{0}: {1}" -f $status, $check.Label)) | Out-Null
+        if (-not [string]::IsNullOrWhiteSpace($check.Path)) {
+            $lines.Add("  $($check.Path)") | Out-Null
+        }
+    }
+
+    return ($lines -join "`r`n")
+}
+
 function Test-ExistingPath {
     param(
         [string]$Path,
@@ -1119,7 +1162,7 @@ function Test-StepCompletion {
             return New-StepCompletionCheck -Passed (Test-ManualStepConfirmed -Step $Step) -Message 'Click Confirm Step Done after downloading the official FFXI installer files.'
         }
         '2. Install FFXI and PlayOnline*' {
-            return New-StepCompletionCheck -Passed (Test-GameInstallFolderLooksValid -Path $gameRootBox.Text) -Message 'Select the parent game install folder that contains both PlayOnlineViewer and FINAL FANTASY XI.'
+            return New-StepCompletionCheck -Passed (Test-InstallFoldersLookValid) -Message (Get-InstallFoldersHelpMessage)
         }
         '5. Install patch files*' {
             return New-StepCompletionCheck -Passed (Test-ExistingPath -Path (Join-CandidatePath $ffxiBox.Text 'FFXi.dll') -PathType Leaf) -Message 'Install Patch Files must finish before continuing.'
@@ -1708,7 +1751,7 @@ function Move-ToNextStep {
 $script:StepSets = @{
     'New Installation' = @(
         [pscustomobject]@{ Title = '1. Download FFXI and PlayOnline'; Body = "Manual step: click Open FFXI Download. It opens the official Square Enix page: $script:OfficialFfxiInstallUrl. Download the FFXI and PlayOnline installer files yourself, then return here and click Confirm Step Done." },
-        [pscustomobject]@{ Title = '2. Install FFXI and PlayOnline'; Body = 'Manual step: from the files you downloaded, install these components: PlayOnline Viewer and Final Fantasy XI Online. Then use the Game install folder Browse button to select the parent folder that contains both PlayOnlineViewer and FINAL FANTASY XI. Finish both installers and select that folder before clicking Next Step.' },
+        [pscustomobject]@{ Title = '2. Install FFXI and PlayOnline'; Body = 'Manual step: from the files you downloaded, install these components: PlayOnline Viewer and Final Fantasy XI Online. Then use the Game install folder Browse button to select the parent folder that contains both PlayOnlineViewer and FINAL FANTASY XI. Usually this is C:\SquareEnix or C:\Program Files (x86)\PlayOnline\SquareEnix. Finish both installers and select that folder before clicking Next Step.' },
         [pscustomobject]@{ Title = '3. Run PlayOnline update'; Body = 'Manual step: run PlayOnline Viewer and let it update completely. If PlayOnline restarts during the update, let it finish before clicking Next Step.' },
         [pscustomobject]@{ Title = '4. Save Existing User settings'; Body = 'Manual step: after PlayOnline updates and restarts, choose Existing User. Enter any Member Name you want. For the PlayOnline ID and password, enter 1234567, or use any values you prefer. Save the settings, then return here.' },
         [pscustomobject]@{ Title = '5. Install patch files'; Body = 'Automated step: use Detect Paths or Browse on Game install folder if the paths are not already filled in, then click Install Patch Files. The assistant downloads the Supernova patch zip and places those files in the correct FFXI folder with backups. When it finishes, click Next Step.' },
