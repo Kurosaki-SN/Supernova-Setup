@@ -1,12 +1,17 @@
 # Inputs supplied by the installer or by a manual PowerShell run.
-# FfxiFolder is the player's local FINAL FANTASY XI folder. CustomDatsUrl and
-# PatchUrl can be overridden for future Supernova archive URLs without editing
-# the rest of the script.
+# FfxiFolder is the player's local FINAL FANTASY XI folder. CustomDatsArchivePath
+# and PatchArchivePath let the installed assistant use bundled zip files first.
+# CustomDatsUrl and PatchUrl remain as download fallbacks for future updates or
+# source runs where the payload folder is missing.
 param(
     [Parameter(Mandatory = $true)]
     [string]$FfxiFolder,
 
+    [string]$CustomDatsArchivePath = '',
+
     [string]$CustomDatsUrl = 'https://www.dropbox.com/scl/fi/8x60dqiegajxd5fw63viz/supernova-dats.zip?dl=1&e=1&file_subpath=%2Fsupernova-dats&rlkey=pxnn71t6jwcmyfdxudkrx5ywm',
+
+    [string]$PatchArchivePath = '',
 
     [string]$PatchUrl = 'https://www.dropbox.com/scl/fi/qx4l8slvbgcg76ko4h0bo/FFXI-UpdatePatch.zip?rlkey=ltvhrbzr9vtaf4pq3bm3hlc03&e=1&dl=1',
 
@@ -157,7 +162,8 @@ function Copy-FileWithBackup {
 function Install-SupernovaArchive {
     param(
         [Parameter(Mandatory = $true)][string]$TargetFfxiFolder,
-        [Parameter(Mandatory = $true)][string]$DownloadUrl,
+        [string]$ArchivePath = '',
+        [string]$DownloadUrl = '',
         [Parameter(Mandatory = $true)][string]$ArchiveLabel,
         [Parameter(Mandatory = $true)][string]$BackupDirectory,
         [Parameter(Mandatory = $true)]
@@ -176,16 +182,31 @@ function Install-SupernovaArchive {
     New-DirectoryIfMissing -Path $extractPath
 
     try {
-        # Download the zip to the temporary workspace. Progress output is muted
-        # because the installer already shows its own status text.
-        Write-PatchLog "Downloading $ArchiveLabel from $DownloadUrl"
-        $previousProgressPreference = $ProgressPreference
-        try {
-            $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipPath -UseBasicParsing -TimeoutSec 600
+        # Prefer a bundled/local zip from the setup assistant's payload folder.
+        # If that file is missing, fall back to the configured Supernova URL.
+        if (-not [string]::IsNullOrWhiteSpace($ArchivePath) -and (Test-Path -LiteralPath $ArchivePath -PathType Leaf)) {
+            Write-PatchLog "Using local $ArchiveLabel archive: $ArchivePath"
+            Copy-Item -LiteralPath $ArchivePath -Destination $zipPath -Force
         }
-        finally {
-            $ProgressPreference = $previousProgressPreference
+        else {
+            if (-not [string]::IsNullOrWhiteSpace($ArchivePath)) {
+                Write-PatchLog "Local $ArchiveLabel archive was not found: $ArchivePath"
+            }
+            if ([string]::IsNullOrWhiteSpace($DownloadUrl)) {
+                throw "$ArchiveLabel archive is missing and no download URL was configured."
+            }
+
+            # Download the zip to the temporary workspace. Progress output is
+            # muted because the installer already shows its own status text.
+            Write-PatchLog "Downloading $ArchiveLabel from $DownloadUrl"
+            $previousProgressPreference = $ProgressPreference
+            try {
+                $ProgressPreference = 'SilentlyContinue'
+                Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipPath -UseBasicParsing -TimeoutSec 600
+            }
+            finally {
+                $ProgressPreference = $previousProgressPreference
+            }
         }
 
         # Expand the archive, then collect the extracted files. An empty archive
@@ -238,7 +259,9 @@ function Install-SupernovaArchive {
 function Apply-SupernovaPatch {
     param(
         [Parameter(Mandatory = $true)][string]$TargetFfxiFolder,
+        [string]$CustomDatsLocalArchive = '',
         [Parameter(Mandatory = $true)][string]$CustomDatsDownloadUrl,
+        [string]$PatchLocalArchive = '',
         [Parameter(Mandatory = $true)][string]$PatchDownloadUrl,
         [Parameter(Mandatory = $true)]
         [ValidateSet('All', 'CustomDats', 'RootPatch')]
@@ -259,11 +282,11 @@ function Apply-SupernovaPatch {
     New-DirectoryIfMissing -Path $backupDir
 
     if ($Selection -eq 'All' -or $Selection -eq 'CustomDats') {
-        Install-SupernovaArchive -TargetFfxiFolder $TargetFfxiFolder -DownloadUrl $CustomDatsDownloadUrl -ArchiveLabel 'Supernova custom DATs' -BackupDirectory $backupDir -InstallMode 'CustomDats'
+        Install-SupernovaArchive -TargetFfxiFolder $TargetFfxiFolder -ArchivePath $CustomDatsLocalArchive -DownloadUrl $CustomDatsDownloadUrl -ArchiveLabel 'Supernova custom DATs' -BackupDirectory $backupDir -InstallMode 'CustomDats'
     }
 
     if ($Selection -eq 'All' -or $Selection -eq 'RootPatch') {
-        Install-SupernovaArchive -TargetFfxiFolder $TargetFfxiFolder -DownloadUrl $PatchDownloadUrl -ArchiveLabel 'Supernova update patch' -BackupDirectory $backupDir -InstallMode 'RootPatch'
+        Install-SupernovaArchive -TargetFfxiFolder $TargetFfxiFolder -ArchivePath $PatchLocalArchive -DownloadUrl $PatchDownloadUrl -ArchiveLabel 'Supernova update patch' -BackupDirectory $backupDir -InstallMode 'RootPatch'
     }
 
     Write-PatchLog "Supernova install selection '$Selection' applied. Backups are in: $backupDir"
@@ -272,7 +295,7 @@ function Apply-SupernovaPatch {
 # Entry point used by the installer. A zero exit code means success; a non-zero
 # exit code lets Inno Setup show a patch failure message.
 try {
-    Apply-SupernovaPatch -TargetFfxiFolder $FfxiFolder -CustomDatsDownloadUrl $CustomDatsUrl -PatchDownloadUrl $PatchUrl -Selection $InstallSelection
+    Apply-SupernovaPatch -TargetFfxiFolder $FfxiFolder -CustomDatsLocalArchive $CustomDatsArchivePath -CustomDatsDownloadUrl $CustomDatsUrl -PatchLocalArchive $PatchArchivePath -PatchDownloadUrl $PatchUrl -Selection $InstallSelection
     exit 0
 }
 catch {

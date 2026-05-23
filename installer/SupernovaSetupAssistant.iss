@@ -34,8 +34,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
-; Bundled scripts. No Square Enix client files, DATs, xiloader binary, Windower,
-; or Ashita files are redistributed here.
+; Bundled scripts and Supernova-provided payload archives. No Square Enix client
+; files, xiloader binary, Windower, or Ashita files are redistributed here.
 [Files]
 Source: "..\SupernovaSetupAssistant.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\SupernovaSetupAssistant.cmd"; DestDir: "{app}"; Flags: ignoreversion
@@ -49,6 +49,7 @@ Source: "..\ConfigureWindower.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\ConfigureAshita.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\ExportSupernovaDiagnostics.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\assets\update-ffxi\*.png"; DestDir: "{app}\assets\update-ffxi"; Flags: ignoreversion
+Source: "..\payload\*.zip"; DestDir: "{app}\payload"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; Shortcuts point at the assistant wrapper.
 [Icons]

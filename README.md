@@ -12,7 +12,7 @@ This is not a replacement for Windower or Ashita. Supernova players should confi
 - Downloads pinned Supernova-compatible `xiloader.exe` v2.0.1, verifies it, backs up any existing copy, and places it beside `pol.exe`.
 - Guides the player to set both `pol.exe` and `xiloader.exe` to **Run as administrator**, then validates both compatibility flags.
 - Opens Windower and Ashita websites for manual download and install. Windower is the recommended play method.
-- Installs Supernova custom DATs and root-level patch files into `FINAL FANTASY XI`.
+- Installs Supernova custom DATs and root-level patch files into `FINAL FANTASY XI`, using bundled Supernova zip archives when they are included with the installer.
 - Backs up overwritten files before replacing them.
 - Offers an optional `vulgar2.dic` cleanup that backs up the file before removing it from the selected `FINAL FANTASY XI` folder.
 - Configures a Windower profile named `Supernova` with:
@@ -98,6 +98,6 @@ Browse the assistant to those copied or fake folders. Do not click the real inst
 - NOTE: ASHITA WILL INSTALL INTO WHATEVER DIRECTORY YOU PLACE THE DOWNLOADED EXECUTABLE FROM.
 - xiloader is downloaded from the pinned LandSandBoat v2.0.1 release asset and checked by MD5.
 - Ashita bootloader xiloader is downloaded from the pinned LandSandBoat v2.0.1 release asset and checked by MD5 before being placed in `ffxi-bootmod`.
-- DATs and patch files are downloaded from the configured Supernova Dropbox links at install time.
+- DATs and patch files are installed from bundled Supernova zip archives when present under the assistant `payload` folder. If those archives are missing, the helper falls back to the configured Supernova Dropbox links at install time.
 - Optional `vulgar2.dic` cleanup only searches inside the selected `FINAL FANTASY XI` folder and stores a backup under `%LOCALAPPDATA%\SupernovaSetupAssistant\Backups`.
 - Logs and backups are stored under `%LOCALAPPDATA%\SupernovaSetupAssistant`.

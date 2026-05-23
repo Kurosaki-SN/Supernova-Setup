@@ -56,6 +56,9 @@ $script:SettingsPath = Join-Path $script:SettingsDir 'settings.json'
 $script:LogPath = Join-Path $script:SettingsDir 'SetupAssistant.log'
 $script:ScriptDir = Split-Path -Parent $PSCommandPath
 $script:StepImageDir = Join-Path $script:ScriptDir 'assets\update-ffxi'
+$script:PayloadDir = Join-Path $script:ScriptDir 'payload'
+$script:BundledPatchArchive = Join-Path $script:PayloadDir 'FFXI-UpdatePatch.zip'
+$script:BundledDatsArchive = Join-Path $script:PayloadDir 'supernova-dats.zip'
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -776,7 +779,7 @@ function Invoke-Helper {
             'echo Supernova Setup Assistant',
             "echo Running: $FriendlyName",
             'echo.',
-            'echo This helper window may take a few minutes while files download, extract, and copy.',
+            'echo This helper window may take a few minutes while files extract and copy.',
             'echo Do not close this window unless you want to cancel the current step.',
             "echo Log: $logHint",
             'echo.',
@@ -1754,13 +1757,13 @@ $script:StepSets = @{
         [pscustomobject]@{ Title = '2. Install FFXI and PlayOnline'; Body = 'Manual step: from the files you downloaded, install these components: PlayOnline Viewer and Final Fantasy XI Online. Then use the Game install folder Browse button to select the parent folder that contains both PlayOnlineViewer and FINAL FANTASY XI. Usually this is C:\SquareEnix or C:\Program Files (x86)\PlayOnline\SquareEnix. Finish both installers and select that folder before clicking Next Step.' },
         [pscustomobject]@{ Title = '3. Run PlayOnline update'; Body = 'Manual step: run PlayOnline Viewer and let it update completely. If PlayOnline restarts during the update, let it finish before clicking Next Step.' },
         [pscustomobject]@{ Title = '4. Save Existing User settings'; Body = 'Manual step: after PlayOnline updates and restarts, choose Existing User. Enter any Member Name you want. For the PlayOnline ID and password, enter 1234567, or use any values you prefer. Save the settings, then return here.' },
-        [pscustomobject]@{ Title = '5. Install patch files'; Body = 'Automated step: use Detect Paths or Browse on Game install folder if the paths are not already filled in, then click Install Patch Files. The assistant downloads the Supernova patch zip and places those files in the correct FFXI folder with backups. When it finishes, click Next Step.' },
+        [pscustomobject]@{ Title = '5. Install patch files'; Body = 'Automated step: use Detect Paths or Browse on Game install folder if the paths are not already filled in, then click Install Patch Files. The assistant uses the bundled Supernova patch zip when it is present, falls back to the Supernova download link only if needed, and places those files in the correct FFXI folder with backups. When it finishes, click Next Step.' },
         [pscustomobject]@{ Title = '6. Click Check Files'; Body = 'Manual step: run PlayOnline Viewer. On the left side of the PlayOnline screen, click Check Files.'; Image = 'checkfiles_ffxi_1.png' },
         [pscustomobject]@{ Title = '7. Select FINAL FANTASY XI'; Body = 'Manual step: keep the PlayOnline Viewer window from Step 6 open. In the Check Files screen, select FINAL FANTASY XI from the drop-down box, then return here and click Next Step.'; Image = 'checkfiles_ffxi_2.png' },
         [pscustomobject]@{ Title = '8. Run Check Files'; Body = 'Manual step: keep using the same PlayOnline Viewer window. Click Check Files and wait for the file check to complete, then return here and click Next Step.'; Image = 'checkfiles_ffxi_3.png' },
         [pscustomobject]@{ Title = '9. Run File Repair'; Body = 'Manual step: keep using the same PlayOnline Viewer window. Click the File Repair button. If you get a separate popup window that says it is launching the FFXI installer or asks for install discs, you can close that popup. When File Repair is done, return here and click Next Step.'; Image = 'filecheck_ffxi_repair.png' },
         [pscustomobject]@{ Title = '10. Install MSVC 2015 x86 runtime'; Body = "Automated step: click Install MSVC x86. The assistant downloads vc_redist.x86.exe from Microsoft's official Visual C++ Redistributable 2015 page and installs it. Windows will ask for administrator approval because this installs a system runtime, not because it changes your FFXI files. When it finishes, click Next Step." },
-        [pscustomobject]@{ Title = '11. Install Supernova DATs'; Body = 'Automated step: click Install Supernova DATs. The assistant downloads the Supernova DAT zip and extracts those files into the correct FINAL FANTASY XI folders with backups. Folder paths such as ROM, ROM3, ROM4, and sound4 are preserved. Optional: click Optional: Delete vulgar2.dic if your setup instructions require that file removed; the assistant backs it up first.' },
+        [pscustomobject]@{ Title = '11. Install Supernova DATs'; Body = 'Automated step: click Install Supernova DATs. The assistant uses the bundled Supernova DAT zip when it is present, falls back to the Supernova download link only if needed, and extracts those files into the correct FINAL FANTASY XI folders with backups. Folder paths such as ROM, ROM3, ROM4, and sound4 are preserved. Optional: click Optional: Delete vulgar2.dic if your setup instructions require that file removed; the assistant backs it up first.' },
         [pscustomobject]@{ Title = '12. Download and install xiloader'; Body = 'Automated step: use Detect Paths or Browse on Game install folder if the PlayOnlineViewer path is not filled in, then click Install xiloader. The assistant downloads pinned Supernova-compatible xiloader v2.0.1, verifies it, backs up any existing xiloader.exe, and places xiloader.exe in the same PlayOnlineViewer folder where pol.exe lives. If that folder is protected by Windows, approve the administrator prompt.' },
         [pscustomobject]@{ Title = '13. Set pol.exe and xiloader.exe to run as administrator'; Body = 'Manual step: click Open POL Folder, or open the selected PlayOnlineViewer folder yourself. Right-click pol.exe, choose Properties, open the Compatibility tab, check Run this program as an administrator at the bottom of the window, then click Apply and OK. Repeat the same steps for xiloader.exe. You must do this for both pol.exe and xiloader.exe before clicking Next Step.' },
         [pscustomobject]@{ Title = '14. Download Windower or Ashita'; Body = "Manual step: choose the play method you are going to use in Required Play Method. Windower is recommended. If you choose Windower, click Open Windower Website. If you choose Ashita, click Open Ashita Website. Download and run the selected tool's executable yourself.`r`n`r`nNOTE: WINDOWER WILL INSTALL INTO WHATEVER DIRECTORY YOU PLACE THE DOWNLOADED EXECUTABLE FROM.`r`n`r`nNOTE: ASHITA WILL INSTALL INTO WHATEVER DIRECTORY YOU PLACE THE DOWNLOADED EXECUTABLE FROM." }
@@ -1787,14 +1790,14 @@ $script:StepSets = @{
         [pscustomobject]@{ Title = '1. Select folders'; Body = 'Detect or browse to your PlayOnlineViewer folder with pol.exe and your FINAL FANTASY XI folder with ROM, ROM3, ROM4, and sound4.' },
         [pscustomobject]@{ Title = '2. Install required runtime and xiloader'; Body = 'Click Install MSVC x86 if validation says the runtime is missing, then click Install xiloader. The assistant downloads pinned xiloader v2.0.1 and places xiloader.exe in the same PlayOnlineViewer folder where pol.exe lives.' },
         [pscustomobject]@{ Title = '3. Set pol.exe and xiloader.exe to run as administrator'; Body = 'Manual step: click Open POL Folder, then right-click pol.exe and xiloader.exe one at a time. For each file, use Properties > Compatibility > Run this program as an administrator. The assistant validates both flags before setup is complete.' },
-        [pscustomobject]@{ Title = '4. Install Supernova files'; Body = 'Click Install Patch Files, then Install Supernova DATs. Both steps back up files before replacing them.' },
+        [pscustomobject]@{ Title = '4. Install Supernova files'; Body = 'Click Install Patch Files, then Install Supernova DATs. Both steps use bundled Supernova archives when present and back up files before replacing them.' },
         [pscustomobject]@{ Title = '5. Configure Windower or Ashita'; Body = 'Choose the required play method and configure it for Supernova.' },
         [pscustomobject]@{ Title = '6. Validate'; Body = 'Click Validate Setup. Setup is ready only when every item says PASS.' }
     )
     'Repair / Update Existing Installation' = @(
         [pscustomobject]@{ Title = '1. Confirm repair'; Body = 'This flow moves VTABLE.DAT out of the FFXI folder with a backup, then opens PlayOnline for manual file repair.' },
         [pscustomobject]@{ Title = '2. Run PlayOnline repair'; Body = 'In PlayOnline Viewer, choose Check Files > FINAL FANTASY XI > File Repair. Close PlayOnline when finished.' },
-        [pscustomobject]@{ Title = '3. Reapply Supernova files'; Body = 'After PlayOnline repair, click Install Patch Files, then Install Supernova DATs.' },
+        [pscustomobject]@{ Title = '3. Reapply Supernova files'; Body = 'After PlayOnline repair, click Install Patch Files, then Install Supernova DATs. The assistant uses bundled Supernova archives when present.' },
         [pscustomobject]@{ Title = '4. Revalidate'; Body = 'Click Validate Setup. Setup is ready only when xiloader, Supernova files, and Windower/Ashita configuration all say PASS.' }
     )
 }
@@ -2281,10 +2284,13 @@ $installXiloaderButton.Add_Click({
 $installPatchButton.Add_Click({
     try {
         $ffxiFolder = Ensure-FfxiFolder
-        if (-not (Confirm-Action "This will download the Supernova patch files, then copy them into:`r`n$ffxiFolder`r`n`r`nExisting files that would be replaced are backed up first. Continue?")) { return }
+        $sourceText = if (Test-Path -LiteralPath $script:BundledPatchArchive -PathType Leaf) { "Bundled archive:`r`n$script:BundledPatchArchive" } else { 'Bundled archive was not found, so the helper will use the configured Supernova download link.' }
+        if (-not (Confirm-Action "This will install the Supernova patch files into:`r`n$ffxiFolder`r`n`r`n$sourceText`r`n`r`nExisting files that would be replaced are backed up first. Continue?")) { return }
         Save-Settings
         Invoke-Helper -ScriptName 'ApplySupernovaPatch.ps1' -FriendlyName 'Supernova patch file install' -ElevationPath $ffxiFolder -Arguments @{
             FfxiFolder = $ffxiFolder
+            PatchArchivePath = $script:BundledPatchArchive
+            CustomDatsArchivePath = $script:BundledDatsArchive
             InstallSelection = 'RootPatch'
         } | Out-Null
         Mark-CurrentStepCompleteIfPassed
@@ -2297,10 +2303,13 @@ $installPatchButton.Add_Click({
 $installDatsButton.Add_Click({
     try {
         $ffxiFolder = Ensure-FfxiFolder
-        if (-not (Confirm-Action "This will download the Supernova custom DATs, then copy them into:`r`n$ffxiFolder`r`n`r`nExisting files that would be replaced are backed up first. Folder paths such as ROM, ROM3, ROM4, and sound4 are preserved. Continue?")) { return }
+        $sourceText = if (Test-Path -LiteralPath $script:BundledDatsArchive -PathType Leaf) { "Bundled archive:`r`n$script:BundledDatsArchive" } else { 'Bundled archive was not found, so the helper will use the configured Supernova download link.' }
+        if (-not (Confirm-Action "This will install the Supernova custom DATs into:`r`n$ffxiFolder`r`n`r`n$sourceText`r`n`r`nExisting files that would be replaced are backed up first. Folder paths such as ROM, ROM3, ROM4, and sound4 are preserved. Continue?")) { return }
         Save-Settings
         Invoke-Helper -ScriptName 'ApplySupernovaPatch.ps1' -FriendlyName 'Supernova custom DAT install' -ElevationPath $ffxiFolder -Arguments @{
             FfxiFolder = $ffxiFolder
+            PatchArchivePath = $script:BundledPatchArchive
+            CustomDatsArchivePath = $script:BundledDatsArchive
             InstallSelection = 'CustomDats'
         } | Out-Null
         Mark-CurrentStepCompleteIfPassed
