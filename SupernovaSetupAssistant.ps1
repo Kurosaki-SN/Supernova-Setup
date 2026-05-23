@@ -697,6 +697,188 @@ function Ensure-AshitaAccountInputs {
     }
 }
 
+# Runs a non-elevated helper process while keeping the assistant responsive.
+# This avoids the old extra runner-window layer that could close while the main
+# assistant was still waiting on it.
+function Invoke-HelperWithProgressDialog {
+    param(
+        [Parameter(Mandatory)][string]$PowerShellExe,
+        [Parameter(Mandatory)][string]$ArgumentString,
+        [Parameter(Mandatory)][string]$FriendlyName,
+        [Parameter(Mandatory)][string]$LogHint
+    )
+
+    $state = [pscustomobject]@{
+        Process = $null
+        ExitCode = 1
+        Done = $false
+    }
+    $outputQueue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
+
+    $progressForm = New-Object System.Windows.Forms.Form
+    $progressForm.Text = 'Supernova Setup Assistant'
+    $progressForm.StartPosition = 'CenterParent'
+    $progressForm.Size = New-Object System.Drawing.Size(760, 520)
+    $progressForm.MinimumSize = New-Object System.Drawing.Size(620, 400)
+    $progressForm.TopMost = $true
+    $progressForm.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+
+    $header = New-Object System.Windows.Forms.Label
+    $header.Dock = [System.Windows.Forms.DockStyle]::Top
+    $header.Height = 72
+    $header.Padding = New-Object System.Windows.Forms.Padding(12, 10, 12, 0)
+    $header.Text = "Running: $FriendlyName`r`nPlease leave this window open until the step completes.`r`nLog: $LogHint"
+    $progressForm.Controls.Add($header)
+
+    $textBox = New-Object System.Windows.Forms.TextBox
+    $textBox.Multiline = $true
+    $textBox.ReadOnly = $true
+    $textBox.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+    $textBox.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $textBox.BackColor = [System.Drawing.Color]::White
+    $progressForm.Controls.Add($textBox)
+
+    $buttonPanel = New-Object System.Windows.Forms.Panel
+    $buttonPanel.Dock = [System.Windows.Forms.DockStyle]::Bottom
+    $buttonPanel.Height = 48
+    $progressForm.Controls.Add($buttonPanel)
+
+    $closeButton = New-Object System.Windows.Forms.Button
+    $closeButton.Text = 'Close'
+    $closeButton.Enabled = $false
+    $closeButton.Size = New-Object System.Drawing.Size(100, 30)
+    $closeButton.Anchor = [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Top
+    $buttonPanel.Controls.Add($closeButton)
+
+    $appendLine = {
+        param([string]$Line)
+        if ($null -eq $Line) { return }
+        $textBox.AppendText($Line + [Environment]::NewLine)
+        $textBox.SelectionStart = $textBox.TextLength
+        $textBox.ScrollToCaret()
+    }.GetNewClosure()
+
+    $drainOutput = {
+        $line = ''
+        while ($outputQueue.TryDequeue([ref]$line)) {
+            & $appendLine $line
+        }
+    }.GetNewClosure()
+
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = 100
+
+    $buttonPanel.Add_Resize({
+        $closeButton.Location = New-Object System.Drawing.Point(($buttonPanel.Width - 116), 9)
+    }.GetNewClosure())
+
+    $closeButton.Add_Click({
+        $progressForm.Close()
+    }.GetNewClosure())
+
+    $progressForm.Add_FormClosing({
+        param($sender, $eventArgs)
+        if (-not $state.Done) {
+            $answer = [System.Windows.Forms.MessageBox]::Show(
+                "The helper is still running. Closing this window will cancel the current step.`r`n`r`nCancel the helper?",
+                $script:AppName,
+                'YesNo',
+                'Warning'
+            )
+            if ($answer -ne [System.Windows.Forms.DialogResult]::Yes) {
+                $eventArgs.Cancel = $true
+                return
+            }
+
+            try {
+                if ($state.Process -and -not $state.Process.HasExited) {
+                    $state.Process.Kill()
+                }
+            }
+            catch {
+                Write-AssistantLog "Could not kill cancelled helper process: $($_.Exception.Message)"
+            }
+            $state.ExitCode = -1073741510
+            $state.Done = $true
+            $timer.Stop()
+        }
+    }.GetNewClosure())
+
+    $timer.Add_Tick({
+        & $drainOutput
+        if ($state.Process -and $state.Process.HasExited) {
+            $timer.Stop()
+            try { $state.Process.WaitForExit() } catch {}
+            & $drainOutput
+            $state.ExitCode = $state.Process.ExitCode
+            $state.Done = $true
+            & $appendLine ''
+            if ($state.ExitCode -eq 0) {
+                & $appendLine 'Completed successfully.'
+                & $appendLine 'Click Close to return to the Supernova Setup Assistant.'
+            }
+            else {
+                if ($state.ExitCode -eq -1073741510) {
+                    & $appendLine 'The helper was interrupted or cancelled before it finished.'
+                }
+                & $appendLine "Failed with exit code $($state.ExitCode)."
+                & $appendLine 'Check the log path shown above. You can close this window after taking a photo or copying the message.'
+            }
+            $closeButton.Enabled = $true
+            $progressForm.TopMost = $true
+            $progressForm.Activate()
+        }
+    }.GetNewClosure())
+
+    $progressForm.Add_Shown({
+        $progressForm.Activate()
+        $buttonPanel.PerformLayout()
+        & $appendLine "Starting $FriendlyName..."
+        & $appendLine 'Do not close this window unless you want to cancel the current step.'
+        & $appendLine ''
+
+        try {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $PowerShellExe
+            $psi.Arguments = $ArgumentString
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.CreateNoWindow = $true
+
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $psi
+            $outputHandler = [System.Diagnostics.DataReceivedEventHandler]{
+                param($sender, $eventArgs)
+                if ($null -ne $eventArgs.Data) {
+                    $outputQueue.Enqueue($eventArgs.Data)
+                }
+            }
+            $process.add_OutputDataReceived($outputHandler)
+            $process.add_ErrorDataReceived($outputHandler)
+            [void]$process.Start()
+            $state.Process = $process
+            $process.BeginOutputReadLine()
+            $process.BeginErrorReadLine()
+            $timer.Start()
+        }
+        catch {
+            $state.ExitCode = 1
+            $state.Done = $true
+            & $appendLine "Failed to start helper: $($_.Exception.Message)"
+            $closeButton.Enabled = $true
+        }
+    }.GetNewClosure())
+
+    [void]$progressForm.ShowDialog($form)
+    $timer.Dispose()
+    if ($state.Process) {
+        $state.Process.Dispose()
+    }
+    $progressForm.Dispose()
+    return [int]$state.ExitCode
+}
+
 # Helper runner. It centralizes argument quoting, optional output capture, UAC
 # prompts, and error messages for all modular helper scripts.
 function Invoke-Helper {
@@ -769,6 +951,17 @@ function Invoke-Helper {
             }
         }
         Show-Info "$FriendlyName needs Windows administrator approval because it will $ElevationReason.`r`n`r`nIf you choose No or close the prompt, this step stops and setup will not be marked complete."
+    }
+
+    if (-not $requiresElevation) {
+        $exitCode = Invoke-HelperWithProgressDialog -PowerShellExe $powerShellExe -ArgumentString $argString -FriendlyName $FriendlyName -LogHint (Get-HelperLogHint -ScriptName $ScriptName)
+        if ($exitCode -eq -1073741510) {
+            throw "$FriendlyName was interrupted or cancelled before it finished. The assistant has not marked setup complete. Log: $(Get-HelperLogHint -ScriptName $ScriptName)"
+        }
+        if ($exitCode -ne 0) {
+            throw "$FriendlyName did not finish successfully. The assistant has not marked setup complete. Exit code: $exitCode. Log: $(Get-HelperLogHint -ScriptName $ScriptName)"
+        }
+        return ''
     }
 
     New-DirectoryIfMissing -Path $script:SettingsDir
