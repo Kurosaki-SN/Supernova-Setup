@@ -51,7 +51,9 @@ The setup is ready only when **Validate Setup** shows every item as `PASS`.
 
 ## Run Without Installer
 
-Double-click:
+For normal player installs, use `SupernovaInstallHelper.exe`; it installs the assistant under LocalAppData and launches the PowerShell assistant directly.
+
+For source-folder troubleshooting only, double-click:
 
 ```bat
 SupernovaSetupAssistant.cmd

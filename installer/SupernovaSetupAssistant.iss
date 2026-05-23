@@ -5,7 +5,7 @@
 #define MyAppName "Supernova Setup Assistant"
 #define MyAppVersion "Beta1.0.5"
 #define MyAppPublisher "Supernova Community"
-#define MyAppCommand "SupernovaSetupAssistant.cmd"
+#define MyAppScript "SupernovaSetupAssistant.ps1"
 
 ; Core installer settings. PrivilegesRequired=lowest keeps setup itself from
 ; requesting admin rights just to install the assistant.
@@ -16,6 +16,8 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Supernova Setup Assistant
 DefaultGroupName={#MyAppName}
+DisableDirPage=yes
+UsePreviousAppDir=no
 AllowNoIcons=yes
 OutputDir=dist
 OutputBaseFilename=SupernovaInstallHelper
@@ -51,11 +53,12 @@ Source: "..\ExportSupernovaDiagnostics.ps1"; DestDir: "{app}"; Flags: ignorevers
 Source: "..\assets\update-ffxi\*.png"; DestDir: "{app}\assets\update-ffxi"; Flags: ignoreversion
 Source: "..\payload\*.zip"; DestDir: "{app}\payload"; Flags: ignoreversion skipifsourcedoesntexist
 
-; Shortcuts point at the assistant wrapper.
+; Shortcuts launch PowerShell directly. The command wrapper is still included as
+; a manual troubleshooting fallback, but normal users do not go through cmd.exe.
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppCommand}"; WorkingDir: "{app}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppCommand}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{group}\{#MyAppName}"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\{#MyAppScript}"""; WorkingDir: "{app}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\{#MyAppScript}"""; WorkingDir: "{app}"; Tasks: desktopicon
 
 ; Offer to open the setup assistant on the final page.
 [Run]
-Filename: "{app}\{#MyAppCommand}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\{#MyAppScript}"""; WorkingDir: "{app}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
