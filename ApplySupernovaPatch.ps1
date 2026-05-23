@@ -56,7 +56,7 @@ function Write-PatchLog {
     New-DirectoryIfMissing -Path $appData
     $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     Add-Content -LiteralPath $logPath -Value "[$stamp] $Message"
-    Write-Host $Message
+    Write-Output $Message
 }
 
 # Validates that the selected folder is the FINAL FANTASY XI folder and not a
@@ -154,6 +154,14 @@ function Copy-FileWithBackup {
     }
 
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
+
+    # Confirm the copied file matches the source file before reporting success.
+    # This makes the helper's final success state meaningful for player support.
+    $sourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Source).Hash
+    $destinationHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Destination).Hash
+    if ($sourceHash -ne $destinationHash) {
+        throw "Verification failed after copying $TargetRelativePath. The destination file does not match the patch archive."
+    }
 }
 
 # Installs one Supernova archive into the FFXI folder. Both the custom DATs zip
@@ -242,7 +250,10 @@ function Install-SupernovaArchive {
             $target = Join-Path $TargetFfxiFolder $targetRelative
             Write-PatchLog "Installing $targetRelative"
             Copy-FileWithBackup -Source $file.FullName -Destination $target -BackupDirectory $BackupDirectory -TargetRelativePath $targetRelative
+            Write-PatchLog "Verified $targetRelative"
         }
+
+        Write-PatchLog "$ArchiveLabel install complete. Installed and verified $($files.Count) files."
     }
     finally {
         # Temporary download/extract files are no longer needed after either a

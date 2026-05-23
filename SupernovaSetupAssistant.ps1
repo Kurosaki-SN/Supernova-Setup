@@ -870,11 +870,11 @@ function Invoke-Helper {
         '        $script:ExitCode = $process.ExitCode',
         '        Add-ProgressLine ""',
         '        if ($script:ExitCode -eq 0) {',
-        '            Add-ProgressLine "Completed successfully. This window will close shortly."',
-        '            $closeTimer = New-Object System.Windows.Forms.Timer',
-        '            $closeTimer.Interval = 2500',
-        '            $closeTimer.Add_Tick({ $closeTimer.Stop(); $form.Close() })',
-        '            $closeTimer.Start()',
+        '            Add-ProgressLine "Completed successfully."',
+        '            Add-ProgressLine "Click Close to return to the Supernova Setup Assistant."',
+        '            $closeButton.Enabled = $true',
+        '            $form.TopMost = $true',
+        '            $form.Activate()',
         '        }',
         '        else {',
         '            if ($script:ExitCode -eq -1073741510) {',
@@ -2400,8 +2400,13 @@ $installPatchButton.Add_Click({
             InstallSelection = 'RootPatch'
         } | Out-Null
         Mark-CurrentStepCompleteIfPassed
-        [void](Show-Validation)
-        Show-Info 'Supernova patch file step finished. Click Next Step to continue.'
+        $patchDll = Join-CandidatePath $ffxiFolder 'FFXi.dll'
+        if (Test-ExistingPath -Path $patchDll -PathType Leaf) {
+            $resultBox.Text = "Supernova patch file step finished.`r`n`r`nThe helper verified copied file hashes before returning success.`r`n`r`nRepresentative file found:`r`n$patchDll`r`n`r`nDetailed log:`r`n$(Get-HelperLogHint -ScriptName 'ApplySupernovaPatch.ps1')`r`n`r`nClick Next Step to continue."
+        }
+        else {
+            $resultBox.Text = "The patch helper finished, but the assistant could not verify FFXi.dll in:`r`n$ffxiFolder`r`n`r`nOpen the patch log before continuing:`r`n$(Get-HelperLogHint -ScriptName 'ApplySupernovaPatch.ps1')"
+        }
     }
     catch { Show-Error $_.Exception.Message }
 })
@@ -2419,8 +2424,19 @@ $installDatsButton.Add_Click({
             InstallSelection = 'CustomDats'
         } | Out-Null
         Mark-CurrentStepCompleteIfPassed
-        [void](Show-Validation)
-        Show-Info 'Supernova DAT step finished. Click Next Step to continue.'
+        $datChecks = @(
+            (Join-CandidatePath $ffxiFolder 'ROM4\1\69.DAT'),
+            (Join-CandidatePath $ffxiFolder 'ROM3\3\21.DAT'),
+            (Join-CandidatePath $ffxiFolder 'sound4\win\music\data\music176.bgw')
+        )
+        $installedChecks = @($datChecks | Where-Object { Test-ExistingPath -Path $_ -PathType Leaf })
+        if ($installedChecks.Count -eq $datChecks.Count) {
+            $resultBox.Text = "Supernova DAT step finished.`r`n`r`nThe helper verified copied file hashes before returning success.`r`n`r`nRepresentative DAT/music files found:`r`n$($installedChecks -join "`r`n")`r`n`r`nDetailed log:`r`n$(Get-HelperLogHint -ScriptName 'ApplySupernovaPatch.ps1')`r`n`r`nClick Next Step to continue."
+        }
+        else {
+            $missingChecks = @($datChecks | Where-Object { -not (Test-ExistingPath -Path $_ -PathType Leaf) })
+            $resultBox.Text = "The DAT helper finished, but the assistant could not verify every expected representative file.`r`n`r`nMissing:`r`n$($missingChecks -join "`r`n")`r`n`r`nOpen the patch log before continuing:`r`n$(Get-HelperLogHint -ScriptName 'ApplySupernovaPatch.ps1')"
+        }
     }
     catch { Show-Error $_.Exception.Message }
 })
