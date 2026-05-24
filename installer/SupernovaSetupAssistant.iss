@@ -16,6 +16,8 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Supernova Setup Assistant
 DefaultGroupName={#MyAppName}
+; Keep the install path fixed under LocalAppData so setup does not need admin
+; rights and old custom install paths do not accidentally get reused.
 DisableDirPage=yes
 UsePreviousAppDir=no
 AllowNoIcons=yes

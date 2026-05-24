@@ -27,6 +27,8 @@ function New-DirectoryIfMissing {
     }
 }
 
+# Appends to logs in a way the setup assistant can safely read while this
+# helper is still writing. The retry loop avoids short file-lock races.
 function Add-SharedLogLine {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -77,6 +79,8 @@ function Write-SetupLog {
     Write-Host $Message
 }
 
+# Handles both Windower XML styles: profile names stored as attributes and
+# profile names stored as child <name> elements.
 function Test-WindowerProfileNameMatches {
     param(
         [Parameter(Mandatory = $true)]$Profile,
@@ -99,6 +103,8 @@ function Test-WindowerProfileNameMatches {
     return $false
 }
 
+# Detects a single blank starter profile so the assistant can safely name it
+# instead of requiring a beginner to edit XML by hand.
 function Test-WindowerProfileIsUnnamed {
     param([Parameter(Mandatory = $true)]$Profile)
 
@@ -114,6 +120,8 @@ function Test-WindowerProfileIsUnnamed {
     return $true
 }
 
+# Writes the profile name in the attribute style Windower understands, and keeps
+# an existing <name> child in sync when one is present.
 function Set-WindowerProfileName {
     param(
         [Parameter(Mandatory = $true)][xml]$Document,

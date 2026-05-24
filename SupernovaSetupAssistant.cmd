@@ -1,4 +1,7 @@
 @echo off
+REM Manual troubleshooting launcher. Installed shortcuts normally launch the
+REM PowerShell script directly, but this wrapper keeps a visible console and
+REM crash logs when testing from the source/install folder.
 REM Start a scoped environment so SCRIPT_DIR does not leak into the caller.
 setlocal
 REM %~dp0 is the folder that contains this command file after install.

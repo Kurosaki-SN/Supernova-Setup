@@ -27,6 +27,8 @@ function New-DirectoryIfMissing {
     }
 }
 
+# Appends to logs in a way the setup assistant can safely read while this
+# helper is still writing. The retry loop avoids short file-lock races.
 function Add-SharedLogLine {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -77,6 +79,8 @@ function Write-MsvcLog {
     Write-Host $Message
 }
 
+# Normalizes registry and file-version strings into [version] objects so the
+# runtime check can compare versions reliably.
 function ConvertTo-VersionOrNull {
     param([string]$Value)
 
@@ -93,6 +97,8 @@ function ConvertTo-VersionOrNull {
     }
 }
 
+# Reads the file version only when the runtime DLL exists. Missing DLLs are
+# expected on clean systems and should be reported as missing, not as crashes.
 function Get-FileVersionOrNull {
     param([string]$Path)
 

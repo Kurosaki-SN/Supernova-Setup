@@ -28,6 +28,8 @@ function New-DirectoryIfMissing {
     }
 }
 
+# Appends to logs in a way the setup assistant can safely read while this
+# helper is still writing. The retry loop avoids short file-lock races.
 function Add-SharedLogLine {
     param(
         [Parameter(Mandatory = $true)][string]$Path,

@@ -49,6 +49,8 @@ function New-DirectoryIfMissing {
     }
 }
 
+# Appends to logs in a way the setup assistant can safely read while this
+# helper is still writing. The retry loop avoids short file-lock races.
 function Add-SharedLogLine {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -132,6 +134,8 @@ function Test-SafeExtractedFile {
     return $fileFull.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)
 }
 
+# Extracts zip entries with explicit path checks instead of relying on shell
+# extraction prompts. This prevents hidden overwrite dialogs and zip-slip paths.
 function Expand-ZipArchiveSafely {
     param(
         [Parameter(Mandatory = $true)][string]$ZipPath,

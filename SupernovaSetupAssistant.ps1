@@ -88,6 +88,8 @@ function New-DirectoryIfMissing {
     }
 }
 
+# Appends to logs with shared read/write access so helper scripts and the UI can
+# write or tail the same log file without short file-lock failures.
 function Add-SharedLogLine {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -129,6 +131,8 @@ function Add-SharedLogLine {
     return $false
 }
 
+# Reads log files while helper scripts may still be appending to them. This is
+# what keeps progress dialogs live without blocking helper output.
 function Read-SharedLogLines {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -165,6 +169,7 @@ function Read-SharedLogLines {
     }
 }
 
+# Writes assistant-level diagnostics that are separate from the helper logs.
 function Write-AssistantLog {
     param([Parameter(Mandatory)][string]$Message)
     New-DirectoryIfMissing -Path $script:SettingsDir
@@ -172,16 +177,19 @@ function Write-AssistantLog {
     [void](Add-SharedLogLine -Path $script:LogPath -Line "[$stamp] $Message")
 }
 
+# Small message-box wrappers keep title/icon usage consistent across handlers.
 function Show-Info {
     param([Parameter(Mandatory)][string]$Message)
     [System.Windows.Forms.MessageBox]::Show($Message, $script:AppName, 'OK', 'Information') | Out-Null
 }
 
+# Shows a blocking error dialog with the assistant title.
 function Show-Error {
     param([Parameter(Mandatory)][string]$Message)
     [System.Windows.Forms.MessageBox]::Show($Message, $script:AppName, 'OK', 'Error') | Out-Null
 }
 
+# Shows a yes/no warning prompt and returns true only when the user chooses Yes.
 function Confirm-Action {
     param([Parameter(Mandatory)][string]$Message)
     $result = [System.Windows.Forms.MessageBox]::Show($Message, $script:AppName, 'YesNo', 'Warning')
@@ -201,6 +209,7 @@ function Add-CandidatePath {
     }
 }
 
+# Returns the first existing candidate path, or a fallback when nothing is found.
 function Get-KnownPath {
     param([string[]]$Candidates, [string]$Fallback)
     foreach ($candidate in $Candidates) {
@@ -211,6 +220,7 @@ function Get-KnownPath {
     return $Fallback
 }
 
+# Default PlayOnlineViewer path lookup for common retail install locations.
 function Get-DefaultPlayOnlineFolder {
     $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
     $pf = [Environment]::GetFolderPath('ProgramFiles')
@@ -222,6 +232,7 @@ function Get-DefaultPlayOnlineFolder {
     return Get-KnownPath -Candidates $candidates.ToArray() -Fallback $fallback
 }
 
+# Default FINAL FANTASY XI path lookup for common retail install locations.
 function Get-DefaultFfxiFolder {
     $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
     $pf = [Environment]::GetFolderPath('ProgramFiles')
@@ -233,6 +244,7 @@ function Get-DefaultFfxiFolder {
     return Get-KnownPath -Candidates $candidates.ToArray() -Fallback $fallback
 }
 
+# Default Windower.exe path lookup for Program Files, Desktop, and C:\Windower4.
 function Get-DefaultWindowerExe {
     $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
     $candidates = [System.Collections.Generic.List[string]]::new()
@@ -243,6 +255,7 @@ function Get-DefaultWindowerExe {
     return Get-KnownPath -Candidates $candidates.ToArray() -Fallback $fallback
 }
 
+# Default Ashita folder lookup for common standalone install locations.
 function Get-DefaultAshitaFolder {
     return Get-KnownPath -Candidates @(
         'C:\Ashita',
@@ -251,6 +264,8 @@ function Get-DefaultAshitaFolder {
     ) -Fallback 'C:\Ashita'
 }
 
+# Defaults the parent install folder to the folder containing the detected FFXI
+# or PlayOnlineViewer folder.
 function Get-DefaultGameInstallFolder {
     $ffxi = Get-DefaultFfxiFolder
     $parent = Split-Path -Parent $ffxi -ErrorAction SilentlyContinue
@@ -262,6 +277,8 @@ function Get-DefaultGameInstallFolder {
     return Split-Path -Parent $pol -ErrorAction SilentlyContinue
 }
 
+# Builds the first-run settings object from detected/default paths. These values
+# are only starting points; the user can still browse to the correct folders.
 function Get-DefaultSettings {
     $pol = Get-DefaultPlayOnlineFolder
     $ffxi = Get-DefaultFfxiFolder
@@ -306,6 +323,8 @@ function Load-Settings {
     }
 }
 
+# Saves the current wizard state so players can close and reopen the assistant
+# without reselecting paths. Password boxes are intentionally not persisted.
 function Save-Settings {
     New-DirectoryIfMissing -Path $script:SettingsDir
     [pscustomobject]@{
@@ -326,6 +345,7 @@ function Save-Settings {
 
 # Process/elevation helpers. Game-folder writes stay in helper scripts, and this
 # logic requests UAC only when a target path appears to be protected by Windows.
+# Quotes an argument for Start-Process/PowerShell style calls.
 function Quote-Argument {
     param([string]$Value)
     if ($null -eq $Value) {
@@ -334,6 +354,7 @@ function Quote-Argument {
     return '"' + $Value.Replace('"', '\"') + '"'
 }
 
+# Quotes an argument for cmd.exe-compatible generated runner commands.
 function Quote-CmdArgument {
     param([string]$Value)
     if ($null -eq $Value) {
@@ -351,6 +372,8 @@ function Quote-PowerShellLiteral {
     return "'" + $Value.Replace("'", "''") + "'"
 }
 
+# Checks whether a target path is under a protected Windows folder. Helpers use
+# this to decide when to ask for UAC instead of running elevated all the time.
 function Test-PathNeedsElevation {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -409,6 +432,8 @@ function Join-CandidatePath {
     return Join-Path $Base $Child
 }
 
+# Resolves a player-selected parent folder to the exact PlayOnlineViewer folder
+# that contains pol.exe.
 function Get-ResolvedPlayOnlineFolder {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -430,6 +455,7 @@ function Get-ResolvedPlayOnlineFolder {
     return $Path
 }
 
+# Confirms a folder is PlayOnlineViewer by checking for pol.exe.
 function Test-PlayOnlineFolderLooksValid {
     param([string]$Path)
     return (
@@ -439,6 +465,7 @@ function Test-PlayOnlineFolderLooksValid {
     )
 }
 
+# Resolves a player-selected parent folder to the exact FINAL FANTASY XI folder.
 function Get-ResolvedFfxiFolder {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -460,6 +487,7 @@ function Get-ResolvedFfxiFolder {
     return $Path
 }
 
+# Confirms a parent folder can resolve to both required game folders.
 function Test-GameInstallFolderLooksValid {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Container)) {
@@ -474,6 +502,8 @@ function Test-GameInstallFolderLooksValid {
     )
 }
 
+# Allows either a valid parent folder or separately valid PlayOnlineViewer and
+# FINAL FANTASY XI paths.
 function Test-InstallFoldersLookValid {
     return (
         (Test-GameInstallFolderLooksValid -Path $gameRootBox.Text) -or
@@ -484,6 +514,8 @@ function Test-InstallFoldersLookValid {
     )
 }
 
+# Builds the user-facing explanation shown when the selected install folders are
+# not valid yet.
 function Get-InstallFoldersHelpMessage {
     $parentPolFolder = Get-ResolvedPlayOnlineFolder -Path $gameRootBox.Text
     $parentFfxi = Get-ResolvedFfxiFolder -Path $gameRootBox.Text
@@ -518,6 +550,8 @@ function Get-InstallFoldersHelpMessage {
     return ($lines -join "`r`n")
 }
 
+# Thin wrapper around Test-Path that treats blank values as missing. This keeps
+# validation checks from throwing when a user has not selected a path yet.
 function Test-ExistingPath {
     param(
         [string]$Path,
@@ -530,6 +564,8 @@ function Test-ExistingPath {
     return Test-Path -LiteralPath $Path -PathType $PathType
 }
 
+# Accepts common folder choices and walks back to the parent folder that contains
+# both PlayOnlineViewer and FINAL FANTASY XI when possible.
 function Get-ResolvedGameInstallFolder {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -566,6 +602,8 @@ function Get-ResolvedGameInstallFolder {
     return $Path
 }
 
+# Applies a chosen parent folder to all related path boxes so beginners do not
+# have to manually fill in PlayOnlineViewer and FINAL FANTASY XI separately.
 function Apply-GameInstallFolder {
     param([string]$Path)
     $resolved = Get-ResolvedGameInstallFolder -Path $Path
@@ -579,6 +617,8 @@ function Apply-GameInstallFolder {
     }
 }
 
+# The FFXI folder must contain these folders because the DAT archive writes into
+# ROM, ROM3, ROM4, and sound4.
 function Test-FfxiFolderLooksValid {
     param([string]$Path)
     return (
@@ -591,6 +631,8 @@ function Test-FfxiFolderLooksValid {
     )
 }
 
+# Updates a textbox only when the resolver found a better value. This keeps the
+# UI honest by showing when the assistant corrected a parent-folder selection.
 function Set-ResolvedPathIfChanged {
     param(
         [System.Windows.Forms.TextBox]$Box,
@@ -604,6 +646,8 @@ function Set-ResolvedPathIfChanged {
     }
 }
 
+# Validates and returns the PlayOnlineViewer folder before helper scripts that
+# need pol.exe or xiloader.exe are allowed to run.
 function Ensure-PlayOnlineFolder {
     if (Test-GameInstallFolderLooksValid -Path $gameRootBox.Text) {
         Apply-GameInstallFolder -Path $gameRootBox.Text
@@ -618,6 +662,8 @@ function Ensure-PlayOnlineFolder {
     return $polBox.Text
 }
 
+# Validates and returns the FINAL FANTASY XI folder before helper scripts that
+# patch DATs or root files are allowed to run.
 function Ensure-FfxiFolder {
     if (Test-GameInstallFolderLooksValid -Path $gameRootBox.Text) {
         Apply-GameInstallFolder -Path $gameRootBox.Text
@@ -632,6 +678,8 @@ function Ensure-FfxiFolder {
     return $ffxiBox.Text
 }
 
+# Confirms the required xiloader.exe is already beside pol.exe before Windower
+# or support actions try to point at it.
 function Ensure-XiloaderInstalled {
     $pol = Ensure-PlayOnlineFolder
     $xiloader = Join-Path $pol 'xiloader.exe'
@@ -641,6 +689,8 @@ function Ensure-XiloaderInstalled {
     return $xiloader
 }
 
+# Reads Windows compatibility flags to verify the user set Run as administrator
+# on pol.exe and xiloader.exe.
 function Test-RunAsAdminCompatibilityFlag {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -683,6 +733,8 @@ function Test-RunAsAdminCompatibilityFlag {
 
 # Runtime detection helpers. The assistant validates the x86 VC++ runtime before
 # saying setup is complete.
+# Normalizes registry and file-version strings into [version] objects so runtime
+# checks can compare versions reliably.
 function ConvertTo-VersionOrNull {
     param([string]$Value)
 
@@ -699,6 +751,8 @@ function ConvertTo-VersionOrNull {
     }
 }
 
+# Reads a file's version only when it exists. Missing DLLs are reported as
+# missing instead of throwing during validation.
 function Get-FileVersionOrNull {
     param([string]$Path)
 
@@ -709,6 +763,8 @@ function Get-FileVersionOrNull {
     return ConvertTo-VersionOrNull -Value (Get-Item -LiteralPath $Path).VersionInfo.FileVersion
 }
 
+# Combines registry checks with x86 runtime DLL checks so validation catches
+# partial or stale VC++ runtime installs.
 function Get-Msvc2015RuntimeX86Status {
     $runtimeRegistryPaths = @(
         'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x86',
@@ -798,6 +854,7 @@ function Get-Msvc2015RuntimeX86Status {
     }
 }
 
+# Convenience boolean for step validation.
 function Test-Msvc2015RuntimeX86Installed {
     return (Get-Msvc2015RuntimeX86Status).MeetsRequirement
 }
@@ -819,6 +876,7 @@ function Ensure-WindowerInputs {
     }
 }
 
+# Validates username/password fields before writing them into Windower args.
 function Ensure-WindowerAccountInputs {
     Ensure-WindowerInputs
     if ([string]::IsNullOrWhiteSpace($windowerUsernameBox.Text)) {
@@ -835,6 +893,8 @@ function Ensure-WindowerAccountInputs {
     }
 }
 
+# Validates the Ashita install folder before any Ashita config or bootloader
+# helper runs.
 function Ensure-AshitaInputs {
     if (-not (Test-Path -LiteralPath $ashitaFolderBox.Text -PathType Container)) {
         throw "Select your Ashita folder."
@@ -844,6 +904,8 @@ function Ensure-AshitaInputs {
     }
 }
 
+# Validates username/password fields before writing them into Ashita command
+# config.
 function Ensure-AshitaAccountInputs {
     Ensure-AshitaInputs
     if ([string]::IsNullOrWhiteSpace($ashitaUsernameBox.Text)) {
@@ -1342,6 +1404,8 @@ function Browse-Folder {
     return $null
 }
 
+# Opens a file picker for exact file selections such as Windower.exe or
+# settings.xml.
 function Browse-File {
     param([string]$Title, [string]$CurrentPath, [string]$Filter = 'Executable files (*.exe)|*.exe|All files (*.*)|*.*')
     $dialog = New-Object System.Windows.Forms.OpenFileDialog
@@ -1357,6 +1421,8 @@ function Browse-File {
     return $null
 }
 
+# Fills path boxes from known defaults and installed-file checks, then asks the
+# player to review anything that was detected.
 function Detect-Paths {
     $pol = Get-DefaultPlayOnlineFolder
     if (Test-Path -LiteralPath $pol) { $polBox.Text = $pol }
@@ -1408,6 +1474,8 @@ function Test-WindowerConfigured {
     return $false
 }
 
+# Checks whether the Windower profile contains saved username/password args
+# without showing the password in the UI.
 function Test-WindowerAccountArgsConfigured {
     if (-not (Test-Path -LiteralPath $windowerSettingsBox.Text -PathType Leaf)) {
         return $false
@@ -1441,6 +1509,8 @@ function Test-WindowerAccountArgsConfigured {
     return $false
 }
 
+# Handles both Windower XML styles: profile names stored as attributes and
+# profile names stored as child <name> elements.
 function Test-WindowerProfileNameMatches {
     param(
         [Parameter(Mandatory = $true)]$Profile,
@@ -1463,6 +1533,8 @@ function Test-WindowerProfileNameMatches {
     return $false
 }
 
+# Detects a single blank starter profile so the assistant can safely treat it as
+# the profile the player just created.
 function Test-WindowerProfileIsUnnamed {
     param([Parameter(Mandatory = $true)]$Profile)
 
@@ -1478,6 +1550,8 @@ function Test-WindowerProfileIsUnnamed {
     return $true
 }
 
+# Finds the requested Windower profile, optionally accepting one unnamed starter
+# profile on fresh installs.
 function Find-WindowerProfileNode {
     param(
         [Parameter(Mandatory = $true)][xml]$Document,
@@ -1502,6 +1576,8 @@ function Find-WindowerProfileNode {
     return $null
 }
 
+# Checks only for the presence of the profile before the config helper is asked
+# to edit settings.xml.
 function Test-WindowerProfileExists {
     if (-not (Test-Path -LiteralPath $windowerSettingsBox.Text -PathType Leaf)) {
         return $false
@@ -1516,6 +1592,7 @@ function Test-WindowerProfileExists {
     return $false
 }
 
+# Validates Ashita's generated Supernova boot config without editing it.
 function Test-AshitaConfigured {
     if ([string]::IsNullOrWhiteSpace($ashitaFolderBox.Text)) {
         return $false
@@ -1538,6 +1615,8 @@ function Test-AshitaConfigured {
     }
 }
 
+# Confirms the optional saved-login command was written into Ashita's profile
+# config. The password itself is never displayed.
 function Test-AshitaAccountCommandConfigured {
     if ([string]::IsNullOrWhiteSpace($ashitaFolderBox.Text)) {
         return $false
@@ -1560,6 +1639,8 @@ function Test-AshitaAccountCommandConfigured {
     }
 }
 
+# Checks whether the xiloader bootloader copy exists in Ashita's ffxi-bootmod
+# folder.
 function Test-AshitaBootloaderInstalled {
     if ([string]::IsNullOrWhiteSpace($ashitaFolderBox.Text)) {
         return $false
@@ -1568,6 +1649,7 @@ function Test-AshitaBootloaderInstalled {
     return Test-Path -LiteralPath $bootloader -PathType Leaf
 }
 
+# Creates a small, uniform validation result object for the final checklist.
 function New-ValidationResult {
     param([string]$Name, [bool]$Passed)
     return [pscustomobject]@{
@@ -1616,6 +1698,8 @@ function Get-ValidationResults {
     return $results
 }
 
+# Displays final validation results in the status box and returns whether every
+# required check passed.
 function Show-Validation {
     $results = Get-ValidationResults
     $lines = [System.Collections.Generic.List[string]]::new()
@@ -1636,6 +1720,8 @@ function Show-Validation {
     return $complete
 }
 
+# Converts saved JSON completion data back into a hashtable keyed by mode,
+# launcher branch, and step title.
 function ConvertTo-StepCompletionTable {
     param($Value)
 
@@ -1657,6 +1743,7 @@ function ConvertTo-StepCompletionTable {
     return $table
 }
 
+# Returns the selected step object, or null if the list has no valid selection.
 function Get-CurrentStep {
     if ($stepsList.SelectedIndex -lt 0 -or $stepsList.SelectedIndex -ge $script:CurrentSteps.Count) {
         return $null
@@ -1664,6 +1751,8 @@ function Get-CurrentStep {
     return $script:CurrentSteps[$stepsList.SelectedIndex]
 }
 
+# Creates a stable key for manual step confirmations so Windower and Ashita
+# branch confirmations do not collide.
 function Get-StepKey {
     param($Step)
 
@@ -1678,6 +1767,7 @@ function Get-StepKey {
     return "$($script:CurrentMode)|$methodPart|$($Step.Title)"
 }
 
+# Checks whether the current manual step has been explicitly confirmed.
 function Test-ManualStepConfirmed {
     param($Step)
 
@@ -1685,6 +1775,7 @@ function Test-ManualStepConfirmed {
     return (-not [string]::IsNullOrWhiteSpace($key) -and $script:StepCompletions.ContainsKey($key))
 }
 
+# Records a completed manual or automated step in the saved wizard state.
 function Mark-StepComplete {
     param($Step)
 
@@ -1697,6 +1788,7 @@ function Mark-StepComplete {
     try { Save-Settings } catch { Write-AssistantLog "Failed to save step completion: $($_.Exception.Message)" }
 }
 
+# Standard return object for step-gating checks.
 function New-StepCompletionCheck {
     param([bool]$Passed, [string]$Message)
     return [pscustomobject]@{
@@ -1705,6 +1797,8 @@ function New-StepCompletionCheck {
     }
 }
 
+# Decides whether the current step is complete enough to allow Next Step. Manual
+# steps use Confirm Step Done; automated steps verify the expected file/config.
 function Test-StepCompletion {
     param($Step)
 
@@ -1809,6 +1903,8 @@ function Set-Mode {
     Save-Settings
 }
 
+# Returns the selected required play method, defaulting to Windower for new
+# players when nothing has been selected yet.
 function Get-SelectedPlayMethod {
     $windowerVar = Get-Variable -Name windowerRadio -ErrorAction SilentlyContinue
     $ashitaVar = Get-Variable -Name ashitaRadio -ErrorAction SilentlyContinue
@@ -1824,6 +1920,8 @@ function Get-SelectedPlayMethod {
     return 'Windower'
 }
 
+# Builds the active step list for a mode, appending the selected Windower or
+# Ashita branch during New Installation.
 function Get-StepsForMode {
     param([string]$Mode)
     $steps = @($script:StepSets[$Mode])
@@ -1836,6 +1934,8 @@ function Get-StepsForMode {
     return $steps
 }
 
+# Refreshes the listbox while trying to preserve the user's current step after a
+# mode or launcher-branch change.
 function Update-StepList {
     $oldIndex = $stepsList.SelectedIndex
     $oldTitle = ''
@@ -1923,6 +2023,8 @@ function Update-StepImage {
     $stepImageBox.Visible = $true
 }
 
+# Opens the small guide screenshot in a larger modal viewer when the player
+# clicks the image.
 function Show-LargeStepImage {
     param([Parameter(Mandatory)][string]$ImagePath)
 
@@ -1979,6 +2081,8 @@ function Show-LargeStepImage {
     [void]$viewer.ShowDialog($form)
 }
 
+# Maps each wizard step to the buttons that should be visible on that screen.
+# This is what keeps the UI step-by-step instead of showing every tool at once.
 function Get-StepActionKeys {
     param($Step)
 
@@ -2033,6 +2137,8 @@ function Get-StepActionKeys {
     }
 }
 
+# Determines whether the path selection group should be visible for the current
+# step.
 function Test-StepNeedsPaths {
     param(
         $Step,
@@ -2062,6 +2168,7 @@ function Test-StepNeedsPaths {
     return $false
 }
 
+# Shows the launcher choice only on steps where Windower/Ashita context matters.
 function Test-StepNeedsLauncherChoice {
     param($Step)
 
@@ -2079,6 +2186,7 @@ function Test-StepNeedsLauncherChoice {
     )
 }
 
+# Repositions only the action buttons needed for this step and hides the rest.
 function Set-VisibleActionButtons {
     param([string[]]$ActionKeys)
 
@@ -2113,6 +2221,8 @@ function Set-VisibleActionButtons {
     }
 }
 
+# Shows or hides path, action, launcher, and account panels for the selected
+# step.
 function Update-StepControls {
     param($Step)
 
@@ -2150,6 +2260,8 @@ function Update-StepControls {
     }
 }
 
+# Refreshes the instruction text, image, controls, and Next button for the
+# currently selected wizard step.
 function Update-StepView {
     if ($stepsList.SelectedIndex -lt 0) { return }
     if ($stepsList.SelectedIndex -ge $script:CurrentSteps.Count) { return }
@@ -2172,6 +2284,8 @@ function Update-StepView {
     }
 }
 
+# Moves the wizard to a specific step from code. This is separate from user list
+# clicks so normal Next/Back navigation can bypass the developer-unlock prompt.
 function Select-StepIndex {
     param([int]$Index)
 
@@ -2186,6 +2300,8 @@ function Select-StepIndex {
     Update-StepView
 }
 
+# Developer-only escape hatch for support testing. Players normally progress
+# with Next Step and cannot freely jump around the list.
 function Request-DevUnlock {
     $dialog = New-Object System.Windows.Forms.Form
     $dialog.Text = 'Developer Unlock'
@@ -2240,6 +2356,8 @@ function Request-DevUnlock {
     return $false
 }
 
+# Enforces the locked step list. A manual click either needs the developer
+# password or is sent back to the last allowed step.
 function Handle-StepSelectionChanged {
     if ($script:SuppressStepSelectionChanged) {
         Update-StepView
@@ -2263,6 +2381,8 @@ function Handle-StepSelectionChanged {
     Update-StepView
 }
 
+# Marks a manual instruction screen complete after the player confirms they did
+# the work outside the assistant.
 function Complete-CurrentManualStep {
     $step = Get-CurrentStep
     if (-not $step) {
@@ -2273,6 +2393,8 @@ function Complete-CurrentManualStep {
     $resultBox.Text = "Marked complete:`r`n$($step.Title)`r`n`r`nClick Next Step -> to continue."
 }
 
+# After an automated action runs, record the step only if its validation check
+# now passes.
 function Mark-CurrentStepCompleteIfPassed {
     $step = Get-CurrentStep
     if (-not $step) {
@@ -2285,6 +2407,8 @@ function Mark-CurrentStepCompleteIfPassed {
     }
 }
 
+# Gatekeeper for the Next Step button. It prevents moving forward until the
+# current step's manual confirmation or automated validation passes.
 function Move-ToNextStep {
     if ($stepsList.SelectedIndex -lt 0 -or $stepsList.SelectedIndex -ge ($stepsList.Items.Count - 1)) {
         return
@@ -2600,6 +2724,8 @@ $actionsGroup.Location = New-Object System.Drawing.Point(290, 384)
 $actionsGroup.Size = New-Object System.Drawing.Size(710, 226)
 $form.Controls.Add($actionsGroup)
 
+# Creates one reusable action button. Later, the wizard moves and shows only the
+# buttons needed for the current step.
 function Add-ActionButton {
     param([string]$Text, [int]$X, [int]$Y)
     $button = New-Object System.Windows.Forms.Button
